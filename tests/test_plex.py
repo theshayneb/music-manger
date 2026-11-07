@@ -28,7 +28,8 @@ def server(tmp_path):
                 body = {"MediaContainer": {"totalSize": 2, "Metadata": [
                     {"ratingKey": "1", "viewCount": 41, "userRating": 8,
                      "Media": [{"Part": [{"file": os.path.join(music, "Beyoncé - Halo.mp3")}]}]},
-                    {"ratingKey": "2", "Media": [{"Part": [{"file": "/elsewhere/Rilo Kiley - Portions for Foxes.mp3"}]}]},
+                    {"ratingKey": "2",
+                     "Media": [{"Part": [{"file": "/elsewhere/Rilo Kiley - Portions for Foxes.mp3"}]}]},
                 ]}}
             elif self.path.startswith("/library/sections/7/refresh"):
                 body = {}

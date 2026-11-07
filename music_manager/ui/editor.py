@@ -192,7 +192,8 @@ class TagEditor(QWidget):
         lyrics_label.setToolTip("Saved in the file and as a .txt next to it")
         lyrics_row.addWidget(lyrics_label, 1)
         self.find_lyrics_btn = QPushButton("🔎 Find lyrics")
-        self.find_lyrics_btn.setToolTip("Look up just the lyrics (Ctrl+Shift+L). With several songs selected, those without lyrics get them")
+        self.find_lyrics_btn.setToolTip("Look up just the lyrics (Ctrl+Shift+L). With several songs selected, "
+                                        "those without lyrics get them")
         self.find_lyrics_btn.clicked.connect(self.lyrics_requested)
         lyrics_row.addWidget(self.find_lyrics_btn)
         outer.addLayout(lyrics_row)
