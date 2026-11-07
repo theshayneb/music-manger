@@ -1,0 +1,91 @@
+name: Build
+
+on:
+  push:
+    branches: [main]
+    tags: ["*"]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        run: python -m pip install -r requirements-dev.txt
+
+      - name: Get ffmpeg (bundled with the app)
+        shell: pwsh
+        run: ./scripts/get-ffmpeg.ps1
+
+      - name: Tests (real conversions with the bundled ffmpeg)
+        env:
+          QT_QPA_PLATFORM: offscreen
+        run: |
+          python -X faulthandler -m pytest -v -rA -W default
+          $code = $LASTEXITCODE
+          Write-Host "pytest process exit code: $code"
+          exit $code
+
+      - name: Build exe
+        shell: pwsh
+        run: ./scripts/build.ps1
+
+      - name: Self-test the built exe
+        shell: pwsh
+        run: |
+          $out = Join-Path $env:RUNNER_TEMP "selftest.json"
+          $p = Start-Process -FilePath dist\MusicManager\MusicManager.exe -ArgumentList "--self-test", "`"$out`"" -Wait -PassThru
+          Get-Content $out
+          Write-Host "exe exit code: $($p.ExitCode)"
+          $r = Get-Content $out | ConvertFrom-Json
+          if (-not $r.ok) { throw "self-test failed" }
+          if ($p.ExitCode -ne 0) { throw "the app did not exit cleanly (exit code $($p.ExitCode))" }
+
+      - name: Zip
+        shell: pwsh
+        run: Compress-Archive -Path dist\MusicManager -DestinationPath MusicManager-windows.zip
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: MusicManager-windows
+          path: MusicManager-windows.zip
+
+      # Publish a release for each new version: either a pushed tag, or a push
+      # to main whose version (music_manager/__init__.py) has no release yet.
+      - name: Decide release
+        id: rel
+        if: github.event_name == 'push'
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if ("${{ github.ref }}".StartsWith("refs/tags/")) {
+            "tag=${{ github.ref_name }}" >> $env:GITHUB_OUTPUT
+            exit 0
+          }
+          if ("${{ github.ref }}" -ne "refs/heads/main") { exit 0 }
+          $v = (Select-String -Path music_manager\__init__.py -Pattern '__version__ = "(.+)"').Matches[0].Groups[1].Value
+          gh release view $v --repo ${{ github.repository }} *> $null
+          if ($LASTEXITCODE -eq 0) { Write-Host "Release $v already exists"; exit 0 }
+          "tag=$v" >> $env:GITHUB_OUTPUT
+          exit 0  # "gh release view" failing just means no release yet
+
+      - name: Release
+        if: steps.rel.outputs.tag != ''
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.rel.outputs.tag }}
+          target_commitish: ${{ github.sha }}
+          name: Music Manager ${{ steps.rel.outputs.tag }}
+          files: MusicManager-windows.zip
+          generate_release_notes: true
