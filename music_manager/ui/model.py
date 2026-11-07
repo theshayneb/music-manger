@@ -11,6 +11,7 @@ from ..core.tags import Track
 
 COLUMNS: list[tuple[str, str]] = [
     ("rating", "Rating"),
+    ("plays", "Plays"),
     ("title", "Title"),
     ("artist", "Artist"),
     ("album", "Album"),
@@ -92,7 +93,7 @@ class TrackModel(QAbstractTableModel):
             font = QFont()
             font.setBold(True)
             return font
-        if role == Qt.ItemDataRole.TextAlignmentRole and key in ("length", "bitrate", "track", "year", "gain"):
+        if role == Qt.ItemDataRole.TextAlignmentRole and key in ("length", "bitrate", "track", "year", "gain", "plays"):
             return int(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
         return None
 
@@ -102,6 +103,8 @@ class TrackModel(QAbstractTableModel):
             return stars(t.rating)
         if key == "length":
             return fmt_time(t.length) if t.length else ""
+        if key == "plays":
+            return str(t.plays) if t.plays else ""
         if key == "bitrate":
             return f"{t.bitrate}{' VBR' if t.bitrate_mode == 'VBR' else ''}" if t.bitrate else ""
         if key == "lyrics":
@@ -116,7 +119,7 @@ class TrackModel(QAbstractTableModel):
 
     @staticmethod
     def sort_value(t: Track, key: str):  # type: ignore[no-untyped-def]
-        if key in ("rating", "length", "bitrate"):
+        if key in ("rating", "length", "bitrate", "plays"):
             return float(getattr(t, key) or 0)
         if key == "track":
             try:

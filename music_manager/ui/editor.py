@@ -70,6 +70,7 @@ class TagEditor(QWidget):
     save_requested = Signal(list, dict)  # paths, changes
     rating_requested = Signal(list, int)  # paths, stars (saved straight away)
     lookup_requested = Signal()
+    repair_requested = Signal()
 
     def __init__(self, parent: QWidget | None = None):
         super().__init__(parent)
@@ -83,6 +84,13 @@ class TagEditor(QWidget):
         self.heading.setWordWrap(True)
         self.heading.setStyleSheet("font-weight: 600;")
         outer.addWidget(self.heading)
+        self.problem = QLabel("")
+        self.problem.setWordWrap(True)
+        self.problem.setStyleSheet("color: #e0605a;")
+        self.repair_btn = QPushButton("🛠  Repair file…")
+        self.repair_btn.clicked.connect(self.repair_requested)
+        outer.addWidget(self.problem)
+        outer.addWidget(self.repair_btn)
 
         self.cover = QLabel()
         self.cover.setFixedSize(COVER_SIZE, COVER_SIZE)
@@ -216,7 +224,25 @@ class TagEditor(QWidget):
         self.art_save.setEnabled(bool(details and details.cover))
         self.save_btn.setEnabled(False)
         self.revert_btn.setEnabled(False)
-        if tracks and not writable:
+        broken = [t for t in tracks if t.error]
+        if len(tracks) == 1 and broken:
+            self.problem.setText(broken[0].error)
+        elif broken:
+            self.problem.setText(f"{len(broken)} of these songs can't be read properly. Repair them first.")
+        else:
+            self.problem.setText("")
+        self.problem.setVisible(bool(broken))
+        self.repair_btn.setVisible(bool(broken))
+        if broken:
+            self.status.setText("Repair the file before editing its tags")
+            for edit in self.edits.values():
+                edit.setEnabled(False)
+            self.rating.setEnabled(False)
+            self.lyrics.setEnabled(False)
+            self.lookup_btn.setEnabled(False)
+            for b in (self.art_file, self.art_paste, self.art_remove):
+                b.setEnabled(False)
+        elif tracks and not writable:
             self.status.setText("Convert to MP3 to edit tags")
         else:
             self.status.setText("")

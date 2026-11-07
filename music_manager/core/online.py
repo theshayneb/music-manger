@@ -160,9 +160,14 @@ def score(c: Candidate, artist: str, title: str, length: float = 0) -> float:
         s += 10 if diff <= 3 else (4 if diff <= 10 else -10)
     if "compilation" in c.detail.lower() or c.album_artist.lower() == "various artists":
         s -= 8  # the original album is nearly always the one wanted
-    if re.search(r"\b(live|karaoke|instrumental|remix|tribute)\b", f"{c.title} {c.album}".lower()) and \
-            not re.search(r"\b(live|karaoke|instrumental|remix|tribute)\b", title.lower()):
-        s -= 12
+    unwanted = r"\b(live|karaoke|instrumental|remix|tribute|bootleg|broadcast|demo)\b"
+    if re.search(unwanted, f"{c.title} {c.album} {c.detail} {c.album_artist}".lower()) and \
+            not re.search(unwanted, title.lower()):
+        s -= 15  # e.g. MusicBrainz's "Album + Live · Bootleg" concert recordings
+    if re.match(r"\d{4}-\d{2}-\d{2}", c.album):
+        s -= 10  # concert recordings named by date
+    if not c.year:
+        s -= 4
     return round(s, 1)
 
 

@@ -11,7 +11,7 @@ from pathlib import Path
 from . import tags
 from .settings import cache_dir
 
-CACHE_VERSION = 3  # 2: language and tempo, 3: edition
+CACHE_VERSION = 5  # 2: language and tempo, 3: edition, 4: real_format, 5: plays
 
 
 def list_songs(folder: str, subfolders: bool) -> list[str]:

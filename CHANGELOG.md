@@ -1,5 +1,19 @@
 # Changelog
 
+## 0.2.1
+
+- **Files that can't be read** ("can't sync to MPEG frame"): the Tags panel now says what's wrong, e.g. "This is
+  really a M4A file with a .mp3 name" or "The MP3 audio has damage or junk at the start", and still shows the
+  file's tags. **🛠 Repair file…** (in the Tags panel or right-click) fixes it:
+  - a damaged MP3 is rebuilt from its own audio frames, **without re-encoding** (no quality lost);
+  - another format with an .mp3 name is converted to a real MP3.
+  Tags, art, lyrics, rating and MusicBee's custom fields are kept; the original goes to the Recycle Bin and the
+  repaired file keeps its name. Editing is switched off until the file is repaired (before, Save seemed to do
+  nothing because the tags couldn't be read back).
+- **Plays** column: the play count stored in the file (ID3 PCNT, the POPM counter, or a PLAY_COUNT tag), shown
+  only, never written.
+- Online lookup: live concert recordings, bootlegs and broadcasts now rank below the studio album.
+
 ## 0.2.0
 
 - **🔎 Look up online** (Ctrl+L, the button in the Tags panel, or right-click): searches iTunes, MusicBrainz and

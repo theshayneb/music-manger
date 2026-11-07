@@ -88,3 +88,14 @@ def test_search_keeps_going_when_a_site_fails(monkeypatch):
     monkeypatch.setattr(online, "SOURCES", {"iTunes": lambda a, t: online.parse_itunes(ITUNES), "MusicBrainz": broken})
     found, problems = online.search("Beyoncé", "Halo", 261)
     assert [c.source for c in found] == ["iTunes"] and problems == ["MusicBrainz: couldn't reach musicbrainz.org"]
+
+
+def test_bootlegs_and_live_recordings_rank_below_the_album():
+    # What MusicBrainz really answered for "Portions for Foxes" (seen in the live check).
+    bootleg = online.Candidate("MusicBrainz", title="Portions for Foxes", artist="Rilo Kiley",
+                               album="2005-04-30: Coachella Music Festival, Indio, CA, USA", track="4",
+                               detail="Album + Live · Bootleg")
+    album = online.Candidate("iTunes", title="Portions for Foxes", artist="Rilo Kiley", album="More Adventurous",
+                             year="2004", length=202)
+    assert online.score(album, "Rilo Kiley", "Portions for Foxes", 202) > \
+        online.score(bootleg, "Rilo Kiley", "Portions for Foxes", 202) + 20

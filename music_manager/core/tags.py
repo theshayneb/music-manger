@@ -102,10 +102,12 @@ class Track:
     language: str = ""      # ID3 TLAN, e.g. "English"
     tempo: str = ""         # MusicBee's Tempo (ID3 TXXX:TEMPO), e.g. "Fast"
     rating: int = 0
+    plays: int = 0          # play count, if a player stored it in the file (never written by this app)
     has_cover: bool = False
     lyrics_in_file: bool = False
     lyrics_file: bool = False
     gain: str = ""          # ReplayGain track gain, e.g. "-6.20 dB"
+    real_format: str = ""   # set when the file isn't what its name says (e.g. "M4A" named .mp3)
     length: float = 0.0     # seconds
     bitrate: int = 0        # kbps
     bitrate_mode: str = ""  # CBR / VBR / ""
@@ -140,6 +142,63 @@ class Details:
     cover: bytes | None = None
     cover_mime: str = ""
     extra: dict[str, str] = field(default_factory=dict)
+
+
+# ---------------------------------------------------------------- what a file really is
+
+def _skip_id3(data: bytes) -> int:
+    """Offset of the audio after any ID3v2 tag(s) at the start."""
+    pos = 0
+    while data[pos:pos + 3] == b"ID3" and len(data) >= pos + 10:
+        b = data[pos + 6:pos + 10]
+        size = (b[0] << 21) | (b[1] << 14) | (b[2] << 7) | b[3]
+        pos += 10 + size + (10 if data[pos + 5] & 0x10 else 0)
+    return pos
+
+
+def sniff(path: str) -> str:
+    """The real format from the file's contents: MP3, M4A, FLAC, OGG, WAV, WEBM, AAC, or "" (unknown/damaged)."""
+    try:
+        with open(path, "rb") as f:
+            head = f.read(16)
+            if head[:3] == b"ID3" and len(head) >= 10:
+                f.seek(0)
+                data = f.read(10)
+                pos = _skip_id3(data + b"\0" * 16)
+                f.seek(pos)
+            else:
+                f.seek(0)
+                pos = 0
+            data = f.read(64 * 1024)
+    except OSError:
+        return ""
+    if data[4:8] == b"ftyp":
+        return "M4A"
+    for magic, name in ((b"fLaC", "FLAC"), (b"OggS", "OGG"), (b"\x1a\x45\xdf\xa3", "WEBM"), (b"0&\xb2u", "WMA")):
+        if data.startswith(magic):
+            return name
+    if data[:4] == b"RIFF" and data[8:12] == b"WAVE":
+        return "WAV"
+    # Look for an MPEG audio frame (MP3) or an ADTS frame (raw AAC) near the start.
+    for i in range(min(len(data) - 4, 16 * 1024)):
+        if data[i] == 0xFF and (data[i + 1] & 0xE0) == 0xE0:
+            layer = (data[i + 1] >> 1) & 0x03
+            if layer == 0 and (data[i + 1] & 0xF6) == 0xF0:
+                return "AAC"
+            if layer == 1 and (data[i + 2] >> 4) not in (0, 15) and ((data[i + 2] >> 2) & 3) != 3:
+                return "MP3"
+    return ""
+
+
+def problem_text(path: str, real: str, exc: Exception) -> str:
+    ext = Path(path).suffix.lower().lstrip(".").upper()
+    if real and real != ext:
+        return (f"This is really a {real} file with a .{ext.lower()} name, so players may not play it and "
+                f"its tags can't be read properly. Right-click → Repair file to turn it into a real MP3.")
+    if real == "MP3":
+        return (f"The MP3 audio has damage or junk at the start ({exc}). "
+                "Right-click → Repair file to rebuild it without re-encoding.")
+    return f"This file seems damaged or isn't music ({exc})."
 
 
 # ---------------------------------------------------------------- helpers
@@ -225,9 +284,20 @@ def read_track(path: str) -> Track:
 
 def _read_mp3(d: Details) -> None:
     t = d.track
-    audio = MP3(t.path)
-    _info(t, audio)
-    tags = audio.tags
+    try:
+        audio = MP3(t.path)
+    except Exception as exc:  # noqa: BLE001
+        # Not readable as MP3 audio: say what the file really is, but still show its tags.
+        real = sniff(t.path)
+        t.real_format = real if real != "MP3" else ""
+        t.error = problem_text(t.path, real, exc)
+        try:
+            tags = ID3(t.path)
+        except Exception:  # noqa: BLE001
+            return
+    else:
+        _info(t, audio)
+        tags = audio.tags
     if tags is None:
         return
     t.title = _first(tags.get("TIT2"))
@@ -241,6 +311,12 @@ def _read_mp3(d: Details) -> None:
     t.track, t.track_total = _split_number(_first(tags.get("TRCK")))
     t.disc, t.disc_total = _split_number(_first(tags.get("TPOS")))
     popms = tags.getall("POPM")
+    counts = [int(getattr(p, "count", 0) or 0) for p in popms]
+    counts += [int(getattr(p, "count", 0) or 0) for p in tags.getall("PCNT")]
+    for frame in tags.getall("TXXX") + [f for f in tags.getall("COMM") if f.desc]:
+        if frame.desc.lower().replace("songs-db_", "").replace("_", "").replace(" ", "") in PLAY_COUNT_NAMES:
+            counts.append(_int(_first(frame.text)))
+    t.plays = max(counts, default=0)
     if popms:
         chosen = next((p for p in popms if p.email == POPM_EMAIL), popms[0])
         t.rating = popm_to_stars(int(chosen.rating))
@@ -258,7 +334,7 @@ def _read_mp3(d: Details) -> None:
             t.tempo = _first(frame.text)
         elif desc == "TSST" and not t.edition:
             t.edition = _first(frame.text)
-        elif desc not in KNOWN_TXXX:
+        elif desc not in KNOWN_TXXX and desc.lower().replace("_", "").replace(" ", "") not in PLAY_COUNT_NAMES:
             d.extra[frame.desc] = " / ".join(str(x) for x in frame.text)
     for frame in tags.getall("COMM"):
         if not frame.desc:
@@ -267,6 +343,8 @@ def _read_mp3(d: Details) -> None:
             continue
         if frame.desc.lower() == "songs-db_tempo":
             musicbee_tempo = _first(frame.text)
+        elif frame.desc.lower().replace("songs-db_", "").replace("_", "").replace(" ", "") in PLAY_COUNT_NAMES:
+            pass
         else:
             d.extra[friendly_comm(frame.desc)] = " / ".join(str(x) for x in frame.text)
     t.tempo = t.tempo or musicbee_tempo
@@ -278,6 +356,14 @@ def _read_mp3(d: Details) -> None:
 
 
 KNOWN_TXXX = {"REPLAYGAIN_TRACK_GAIN", "REPLAYGAIN_TRACK_PEAK", "TEMPO", "TSST"}
+PLAY_COUNT_NAMES = {"playcount", "playcounter", "plays", "fmpsplaycount"}
+
+
+def _int(value: str) -> int:
+    try:
+        return max(0, int(float(value)))
+    except (TypeError, ValueError):
+        return 0
 
 
 def friendly_comm(desc: str) -> str:
@@ -307,6 +393,8 @@ def _read_flac(d: Details) -> None:
     t.language = _vorbis(tags, "language")
     t.tempo = _vorbis(tags, "tempo")
     t.edition = _vorbis(tags, "discsubtitle", "edition")
+    t.plays = max((_int(_vorbis(tags, k)) for k in ("playcount", "play_count", "fmps_playcount", "play_counter")),
+                  default=0)
     t.artist = _vorbis(tags, "artist")
     t.album_artist = _vorbis(tags, "albumartist", "album artist", "album_artist")
     t.album = _vorbis(tags, "album")

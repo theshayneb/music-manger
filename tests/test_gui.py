@@ -98,3 +98,31 @@ def test_lookup_fills_the_tags_panel(app, song, tmp_path, monkeypatch):
     editor.apply_lookup(dialog.chosen_fields, dialog.chosen_cover, dialog.chosen_lyrics)
     assert editor.changed["album"] == "I Am... Sasha Fierce" and editor.changed["lyrics"] == "Remember those walls"
     assert editor.changed["cover"][0] == PNG
+
+
+@needs_ffmpeg
+def test_broken_file_shows_why_and_can_be_repaired(app, song, tmp_path, monkeypatch):
+    from PySide6.QtWidgets import QMessageBox
+
+    from music_manager.ui.main_window import MainWindow
+
+    good = song("dl/x.mp3", seconds=4)
+    tags.write(str(good), {"title": "Lunar Eclipse", "artist": "The Vaccines"})
+    raw = good.read_bytes()
+    end = tags._skip_id3(raw)
+    bad = good.with_name("The Vaccines - Lunar Eclipse.mp3")
+    bad.write_bytes(raw[:end] + bytes((i * 7) % 255 for i in range(1_200_000)) + raw[end:])
+    good.unlink()
+    window = MainWindow(Settings(review_folder=str(bad.parent), library_folder=str(tmp_path)), FFMPEG)
+    window.show()
+    wait(app, window, 5, until=lambda: len(window.model.tracks) == 1)
+    window._select_path(str(bad))
+    wait(app, window, 2, until=lambda: window.editor.problem.text() != "")
+    assert window.editor.problem.isVisibleTo(window.editor) and window.editor.repair_btn.isVisibleTo(window.editor)
+    assert window.editor.edits["title"].text() == "Lunar Eclipse" and not window.editor.edits["title"].isEnabled()
+
+    monkeypatch.setattr(QMessageBox, "question", lambda *a, **k: QMessageBox.StandardButton.Yes)
+    window.repair_selected()
+    wait(app, window, 15, until=lambda: not window._busy and not window.model.tracks[0].error)
+    assert not window.model.tracks[0].error and window.model.tracks[0].title == "Lunar Eclipse"
+    window.close()

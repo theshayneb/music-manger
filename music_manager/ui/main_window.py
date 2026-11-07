@@ -32,7 +32,7 @@ from PySide6.QtWidgets import (
 )
 
 from .. import __version__
-from ..core import convert, fileops, keep, library, loudness, naming, tags
+from ..core import convert, fileops, keep, library, loudness, naming, repair, tags
 from ..core.ffmpeg import find_ffmpeg
 from ..core.settings import Settings
 from ..core.tags import Track
@@ -54,7 +54,7 @@ SHOW_FILTERS = [
     ("low", "Low bitrate (under 192 kbps)"),
 ]
 SCAN_CHUNK = 150
-COLUMNS_STATE_KEY = "table2"  # changed when columns are added, so the saved layout isn't misapplied
+COLUMNS_STATE_KEY = "table3"  # changed when columns are added, so the saved layout isn't misapplied
 
 
 class MainWindow(QMainWindow):
@@ -162,6 +162,7 @@ class MainWindow(QMainWindow):
         self.editor.save_requested.connect(self.save_tags)
         self.editor.rating_requested.connect(self.set_rating)
         self.editor.lookup_requested.connect(self.lookup_selected)
+        self.editor.repair_requested.connect(self.repair_selected)
         self.player.next_requested.connect(lambda: self.play_relative(1))
         self.player.previous_requested.connect(lambda: self.play_relative(-1))
         self.player.play_requested.connect(self.play_selected)
@@ -251,7 +252,7 @@ class MainWindow(QMainWindow):
         else:
             for col, key in enumerate(COLUMN_KEYS):
                 header.setSectionHidden(col, key in HIDDEN_BY_DEFAULT)
-            widths = {"rating": 70, "title": 240, "artist": 180, "album": 180, "year": 50, "length": 55,
+            widths = {"rating": 70, "plays": 50, "title": 240, "artist": 180, "album": 180, "year": 50, "length": 55,
                       "bitrate": 70, "format": 50, "lyrics": 50, "cover": 40, "gain": 75}
             for col, key in enumerate(COLUMN_KEYS):
                 if key in widths:
@@ -704,6 +705,29 @@ class MainWindow(QMainWindow):
 
         self.bg.run(lambda: fileops.rename(plan), done)
 
+    def repair_selected(self) -> None:
+        tracks = [t for t in self.selected_tracks() if t.error]
+        if not tracks or self._busy:
+            return
+        if not self.ffmpeg:
+            QMessageBox.warning(self, "Repair", "ffmpeg wasn't found, so files can't be repaired.")
+            return
+        notes = [f"• {t.name}: {repair.describe(t.path)[0]}" for t in tracks[:8]]
+        answer = QMessageBox.question(
+            self, "Repair", "\n".join(notes) + "\n\nTags, art, lyrics and rating are kept. The original goes to "
+            "the Recycle Bin and the repaired file keeps the same name. Repair now?")
+        if answer != QMessageBox.StandardButton.Yes:
+            return
+        state = self._release([t.path for t in tracks])
+
+        def finished(results, failures) -> None:  # type: ignore[no-untyped-def]
+            self._resume(state)
+            self._report("Repaired", len(results), failures, None)
+            self._refresh_tracks({t.path: t.path for t, _ in results})
+
+        self._run_each("Repairing", tracks,
+                       lambda t: repair.repair(self.ffmpeg, t.path, self.settings.mp3_quality), finished)
+
     def measure_selected(self) -> None:
         tracks = [t for t in self.selected_tracks() if tags.can_write(t.path)]
         if not tracks:
@@ -782,6 +806,8 @@ class MainWindow(QMainWindow):
         if len(tracks) == 1:
             menu.addAction("Rename… (F2)", self.rename_one)
         menu.addAction("Measure volume", self.measure_selected)
+        if any(t.error for t in tracks):
+            menu.addAction("🛠 Repair file…", self.repair_selected)
         if len(tracks) == 1:
             menu.addAction("🔎 Look up online… (Ctrl+L)", self.lookup_selected)
         rating = menu.addMenu("Rating")

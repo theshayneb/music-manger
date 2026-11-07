@@ -139,3 +139,20 @@ def test_musicbee_extra_tags_are_read_and_kept(song):
     assert str(raw["COMM:Songs-DB_Tempo:eng"]) == "Medium" and "TXXX:TEMPO" not in raw
     assert str(raw["TXXX:TSST"]) == "Deluxe Edition" and "TSST" not in raw
     assert str(raw["COMM:Songs-DB_Custom1:eng"]) == "English" and str(raw["TPOS"]) == "01/02"
+
+
+def test_play_count_is_shown_from_whichever_frame_has_it(song):
+    from mutagen.id3 import PCNT, POPM, TXXX
+
+    path = str(song("p.mp3"))
+    id3 = ID3()
+    id3.add(POPM(email="MusicBee", rating=196, count=12))
+    id3.add(PCNT(count=41))
+    id3.add(TXXX(encoding=1, desc="PLAY_COUNT", text=["7"]))
+    id3.save(path, v2_version=3)
+    d = tags.read(path, with_details=True)
+    assert d.track.plays == 41 and d.extra == {}
+    tags.write(path, {"rating": 5, "title": "x"})  # editing never touches the counts
+    raw = ID3(path, translate=False)
+    assert raw.getall("PCNT")[0].count == 41 and raw.getall("POPM")[0].count == 12
+    assert tags.read_track(path).plays == 41

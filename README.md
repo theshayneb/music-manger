@@ -33,6 +33,7 @@ Windows SmartScreen may warn the first time because the app isn't signed: choose
 | Rename | **Rename…** (from tags, with a preview) or **F2** for one song |
 | Convert to MP3 | **Convert to MP3** for FLAC/WAV/M4A songs without keeping them |
 | Measure volume | Writes ReplayGain tags for the selected songs |
+| Repair | A red song can't be read. Hover it to see why, then right-click → **Repair file…** (damaged MP3s are rebuilt without re-encoding) |
 | Find songs that need work | **Show**: missing tags, no album art, no lyrics, volume not measured, low bitrate |
 | Search | **Ctrl+F**: every word must match the title, artist, album, genre or file name |
 | Columns | Right-click the column headers to show or hide columns; drag to reorder |
