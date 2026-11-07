@@ -36,6 +36,12 @@ jobs:
           Write-Host "pytest process exit code: $code"
           exit $code
 
+      - name: Live lookups (real requests to iTunes, MusicBrainz, Deezer and the lyrics sites; informational)
+        continue-on-error: true
+        env:
+          MUSIC_MANAGER_LIVE: "1"
+        run: python -m pytest tests/test_online_live.py -v -s -rA
+
       - name: Build exe
         shell: pwsh
         run: ./scripts/build.ps1

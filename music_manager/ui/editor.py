@@ -6,6 +6,8 @@ only written if you change it. Nothing is written until you click Save (Ctrl+S).
 
 from __future__ import annotations
 
+import html
+
 from PySide6.QtCore import QByteArray, Qt, Signal
 from PySide6.QtGui import QGuiApplication, QImage, QPixmap
 from PySide6.QtWidgets import (
@@ -67,6 +69,7 @@ class RatingStars(QWidget):
 class TagEditor(QWidget):
     save_requested = Signal(list, dict)  # paths, changes
     rating_requested = Signal(list, int)  # paths, stars (saved straight away)
+    lookup_requested = Signal()
 
     def __init__(self, parent: QWidget | None = None):
         super().__init__(parent)
@@ -103,12 +106,14 @@ class TagEditor(QWidget):
         form = QFormLayout()
         form.setFieldGrowthPolicy(QFormLayout.FieldGrowthPolicy.AllNonFixedFieldsGrow)
         self.edits: dict[str, QLineEdit] = {}
-        for key in ("title", "artist", "album_artist", "album", "year", "genre", "language", "tempo"):
+        for key in ("title", "artist", "album_artist", "album", "edition", "year", "genre", "language", "tempo"):
             edit = QLineEdit()
             self.edits[key] = edit
             form.addRow(tags.FIELD_LABELS[key], edit)
         self.edits["genre"].setToolTip("Several genres: separate them with ;")
         self.edits["tempo"].setToolTip("MusicBee's Tempo field (e.g. Slow, Medium, Fast)")
+        self.edits["edition"].setToolTip("e.g. Deluxe Edition, iTunes Version (saved like MusicBee: TXXX:TSST). "
+                                         "Plex and Symfonium don't show it.")
         nums = QGridLayout()
         for _col, key in enumerate(("track", "track_total", "disc", "disc_total")):
             edit = QLineEdit()
@@ -126,12 +131,21 @@ class TagEditor(QWidget):
         self.rating = RatingStars()
         form.addRow("Rating", self.rating)
         outer.addLayout(form)
+        self.lookup_btn = QPushButton("🔎  Look up tags, art and lyrics online…  (Ctrl+L)")
+        self.lookup_btn.clicked.connect(self.lookup_requested)
+        outer.addWidget(self.lookup_btn)
 
         outer.addWidget(QLabel("Lyrics (saved in the file and as a .txt next to it)"))
         self.lyrics = QPlainTextEdit()
         self.lyrics.setPlaceholderText("Paste lyrics here")
         self.lyrics.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
         outer.addWidget(self.lyrics, 1)
+        self.extra = QLabel("")
+        self.extra.setWordWrap(True)
+        self.extra.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
+        self.extra.setStyleSheet("color: palette(placeholder-text);")
+        self.extra.setToolTip("Other tags in this file. Music Manager keeps them as they are.")
+        outer.addWidget(self.extra)
 
         buttons = QHBoxLayout()
         self.status = QLabel("")
@@ -193,6 +207,10 @@ class TagEditor(QWidget):
             self.lyrics.setPlaceholderText("Paste lyrics here")
             self.lyrics.setPlainText(details.lyrics if details else "")
         self._show_cover(details.cover if details else None, tracks)
+        extra = details.extra if (details and not many) else {}
+        self.extra.setText("Other tags: " + " · ".join(f"<b>{html.escape(k)}</b>: {html.escape(v)}"
+                                                       for k, v in sorted(extra.items())) if extra else "")
+        self.lookup_btn.setEnabled(len(tracks) == 1)
         for b in (self.art_file, self.art_paste, self.art_remove):
             b.setEnabled(writable)
         self.art_save.setEnabled(bool(details and details.cover))
@@ -305,6 +323,16 @@ class TagEditor(QWidget):
         if key in self.edits:
             self.edits[key].setText(value)
             self._edited(key, value)
+
+    def apply_lookup(self, fields: dict[str, str], cover: bytes | None, lyrics: str | None) -> None:
+        """Put what was chosen in the lookup window into the editor, ready to Save."""
+        for key, value in fields.items():
+            self.apply_field(key, value)
+        if cover:
+            self.set_cover(cover)
+        if lyrics is not None and len(self.tracks) == 1:
+            self.lyrics.setPlainText(lyrics)  # textChanged marks it as changed
+        self._mark()
 
     def save(self) -> None:
         if self.tracks and self.changed:

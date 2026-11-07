@@ -14,7 +14,7 @@ def test_mp3_round_trip_writes_id3v23(song):
     d = tags.read(path, with_details=True)
     t = d.track
     assert (t.title, t.artist, t.album_artist, t.album, t.year) == ("Hello", "Adele", "Adele", "25", "2015")
-    assert (t.genre, t.track, t.track_total, t.disc, t.disc_total) == ("Pop; Soul", "01", "11", "1", "1")
+    assert (t.genre, t.track, t.track_total, t.disc, t.disc_total) == ("Pop; Soul", "01", "11", "01", "01")
     assert t.rating == 4 and t.has_cover and t.lyrics_in_file and t.lyrics_file
     assert d.lyrics == "Hello\nit's me" and d.cover == PNG
     assert ID3(path).version[:2] == (2, 3)
@@ -116,3 +116,26 @@ def test_year_is_stored_as_a_v23_frame(song):
     raw = open(path, "rb").read(4096)
     assert raw[3] == 3 and b"TYER" in raw and b"TDRC" not in raw
     assert tags.read_track(path).year == "2004"
+
+
+def test_musicbee_extra_tags_are_read_and_kept(song):
+    from mutagen.id3 import COMM, TALB, TPOS, TXXX
+
+    path = str(song("Beyoncé - That's Why You're Beautiful.mp3"))
+    id3 = ID3()
+    for frame in (TALB(encoding=1, text=["I Am... Sasha Fierce"]), TPOS(encoding=1, text=["01/02"]),
+                  COMM(encoding=1, lang="eng", desc="Songs-DB_Custom1", text=["English"]),
+                  COMM(encoding=1, lang="eng", desc="Songs-DB_Tempo", text=["Slow"]),
+                  COMM(encoding=1, lang="eng", desc="Songs-DB_Custom2", text=["Deluxe Edition"]),
+                  TXXX(encoding=1, desc="TSST", text=["Deluxe Edition"])):
+        id3.add(frame)
+    id3.save(path, v2_version=3)
+    d = tags.read(path, with_details=True)
+    assert (d.track.disc, d.track.disc_total, d.track.edition, d.track.tempo) == ("01", "02", "Deluxe Edition", "Slow")
+    assert d.extra == {"Custom 1 (MusicBee)": "English", "Custom 2 (MusicBee)": "Deluxe Edition"}
+
+    tags.write(path, {"tempo": "Medium", "edition": "Deluxe Edition", "title": "That's Why You're Beautiful"})
+    raw = ID3(path, translate=False)
+    assert str(raw["COMM:Songs-DB_Tempo:eng"]) == "Medium" and "TXXX:TEMPO" not in raw
+    assert str(raw["TXXX:TSST"]) == "Deluxe Edition" and "TSST" not in raw
+    assert str(raw["COMM:Songs-DB_Custom1:eng"]) == "English" and str(raw["TPOS"]) == "01/02"

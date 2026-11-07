@@ -59,3 +59,42 @@ def test_review_edit_and_keep(app, song, tmp_path, monkeypatch):
     assert os.path.exists(music / "Adele - Hello.mp3")
     assert [t.name for t in window.model.tracks] == ["b.mp3"]
     window.close()
+
+
+@needs_ffmpeg
+def test_lookup_fills_the_tags_panel(app, song, tmp_path, monkeypatch):
+    from music_manager.core import online
+    from music_manager.ui import lookup as lookup_ui
+    from music_manager.ui.editor import TagEditor
+
+    from .conftest import PNG
+    from .test_online import ITUNES
+
+    path = song("Beyoncé - Halo.mp3")
+    tags.write(str(path), {"artist": "Beyoncé", "title": "Halo", "genre": "R&B"})
+    found = online.parse_itunes(ITUNES)
+    monkeypatch.setattr(online, "search", lambda a, t, length=0: (found, []))
+    monkeypatch.setattr(online, "find_lyrics", lambda *a, **k: ([online.Lyrics("LRCLIB", "Remember those walls")], []))
+    monkeypatch.setattr(online, "get_image", lambda url: PNG)
+
+    details = tags.read(str(path), with_details=True)
+    dialog = lookup_ui.LookupDialog(details.track, details)
+    end = time.time() + 5
+    while time.time() < end and (dialog.results.count() == 0 or dialog.art.count() == 0 or not dialog.lyrics_found):
+        app.processEvents()
+        lookup_ui.net().wait(20)
+    app.processEvents()
+    assert dialog.results.count() == 1 and dialog.art.count() == 1
+    dialog.art.setCurrentRow(0)
+    dialog._accept()
+    # Empty tags are filled; the genre you chose ("R&B") isn't replaced by iTunes' "R&B/Soul" unless ticked.
+    assert dialog.chosen_fields["album"] == "I Am... Sasha Fierce"
+    assert dialog.chosen_fields["edition"] == "Deluxe Edition" and dialog.chosen_fields["track"] == "2"
+    assert "genre" not in dialog.chosen_fields and "title" not in dialog.chosen_fields
+    assert dialog.chosen_cover == PNG and dialog.chosen_lyrics == "Remember those walls"
+
+    editor = TagEditor()
+    editor.show_tracks([details.track], details)
+    editor.apply_lookup(dialog.chosen_fields, dialog.chosen_cover, dialog.chosen_lyrics)
+    assert editor.changed["album"] == "I Am... Sasha Fierce" and editor.changed["lyrics"] == "Remember those walls"
+    assert editor.changed["cover"][0] == PNG

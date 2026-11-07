@@ -25,6 +25,7 @@ Windows SmartScreen may warn the first time because the app isn't signed: choose
 | Play | Double-click a song or press **Enter**. **Space** play/pause, **Ctrl+←** back 10 s, **Ctrl+→** forward 30 s, **Ctrl+↑/↓** previous/next |
 | Keep (Review only) | **K** or **✔ Keep**. A preview shows each song's new name and what will happen before anything changes |
 | Delete | **Delete** (Recycle Bin, with its lyrics file) |
+| Look up online | **Ctrl+L** or **🔎 Look up…** in the Tags panel: tags from iTunes, MusicBrainz and Deezer side by side with yours, album covers with their sizes, and lyrics from LRCLIB, Genius and lyrics.ovh. Tick what you want; it goes into the Tags panel, ready to Save |
 | Edit tags | Select one or more songs and type in the **Tags** panel; **Enter** or **Ctrl+S** saves. With several songs selected, fields that differ show *(mixed)* and are only changed if you type in them |
 | Rating | Click the stars or **Ctrl+1…5**, **Ctrl+0** clears (saved straight away) |
 | Album art | **From file…**, or copy an image in your browser and click **Paste**. **Save as…** saves the picture |

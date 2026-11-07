@@ -1,5 +1,21 @@
 # Changelog
 
+## 0.2.0
+
+- **🔎 Look up online** (Ctrl+L, the button in the Tags panel, or right-click): searches iTunes, MusicBrainz and
+  Deezer for the song's tags, shows album covers from iTunes, Cover Art Archive and Deezer with their real sizes
+  (biggest first), and finds lyrics on LRCLIB, Genius and lyrics.ovh. Works in Review too, before you keep a song.
+  Untagged downloads are searched by their file name ("Artist - Title").
+  - Tags: your tags and the found ones side by side. Empty tags are ticked; a different Album, Year, Track or Disc is
+    ticked; your Title, Artist, Genre and Edition are only replaced if you tick them. Double-click a found value
+    to change it.
+  - What you tick goes into the Tags panel as "Not saved"; nothing is written until you click Save.
+- **Edition** (e.g. Deluxe Edition, iTunes Version), saved like MusicBee as `TXXX:TSST`. Lookups fill it from album
+  names like "B'Day (Deluxe Edition)".
+- Other tags in a song (e.g. MusicBee's Custom fields) are listed under the lyrics. They're never changed.
+- Tempo is also read from, and saved back to, older MusicBee files that keep it as a comment (`Songs-DB_Tempo`).
+- Disc numbers are saved with a leading zero (`01/02`), like track numbers.
+
 ## 0.1.1
 
 - Fixed: the year was saved in an ID3v2.4-style frame (TDRC) inside ID3v2.3 tags, which some players don't

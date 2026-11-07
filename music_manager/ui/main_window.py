@@ -38,6 +38,7 @@ from ..core.settings import Settings
 from ..core.tags import Track
 from .dialogs import PlanDialog, SettingsDialog, ask_text
 from .editor import TagEditor
+from .lookup import LookupDialog
 from .model import COLUMN_KEYS, HIDDEN_BY_DEFAULT, TrackFilter, TrackModel
 from .player import PlayerBar
 from .theme import apply_theme
@@ -160,6 +161,7 @@ class MainWindow(QMainWindow):
         self.table.customContextMenuRequested.connect(self._context_menu)
         self.editor.save_requested.connect(self.save_tags)
         self.editor.rating_requested.connect(self.set_rating)
+        self.editor.lookup_requested.connect(self.lookup_selected)
         self.player.next_requested.connect(lambda: self.play_relative(1))
         self.player.previous_requested.connect(lambda: self.play_relative(-1))
         self.player.play_requested.connect(self.play_selected)
@@ -220,6 +222,7 @@ class MainWindow(QMainWindow):
         action("⚙ Settings", self.open_settings, "Ctrl+,")
 
         action("Save tags", self.editor.save, "Ctrl+S", toolbar=False)
+        action("Look up online", self.lookup_selected, "Ctrl+L", toolbar=False)
         action("Search", lambda: (self.search.setFocus(), self.search.selectAll()), "Ctrl+F", toolbar=False)
         action("Rename one", self.rename_one, "F2", toolbar=False)
         action("Show in Explorer", self.show_in_explorer, "Ctrl+E", toolbar=False)
@@ -518,6 +521,26 @@ class MainWindow(QMainWindow):
 
         self.bg.run(work, done)
 
+    def lookup_selected(self) -> None:
+        tracks = self.selected_tracks()
+        if len(tracks) != 1:
+            self.flash("Select one song to look up.")
+            return
+        track = tracks[0]
+        if not tags.can_write(track.path):
+            self.flash("Convert this song to MP3 first to change its tags.")
+            return
+        details = self.editor._details if self.editor.tracks == tracks else None
+        dialog = LookupDialog(track, details, self)
+        if dialog.exec() != QDialog.DialogCode.Accepted:
+            return
+        if [t.path for t in self.editor.tracks] != [track.path]:
+            return  # the selection changed meanwhile
+        self.editor.apply_lookup(dialog.chosen_fields, dialog.chosen_cover, dialog.chosen_lyrics)
+        picked = len(dialog.chosen_fields) + bool(dialog.chosen_cover) + (dialog.chosen_lyrics is not None)
+        self.flash(f"{picked} change{'s' if picked != 1 else ''} from the lookup are in the Tags panel: "
+                   "check them and click Save." if picked else "Nothing was picked.")
+
     def set_rating(self, paths: list[str], stars: int) -> None:
         paths = [p for p in paths if tags.can_write(p)]
         if paths:
@@ -759,6 +782,8 @@ class MainWindow(QMainWindow):
         if len(tracks) == 1:
             menu.addAction("Rename… (F2)", self.rename_one)
         menu.addAction("Measure volume", self.measure_selected)
+        if len(tracks) == 1:
+            menu.addAction("🔎 Look up online… (Ctrl+L)", self.lookup_selected)
         rating = menu.addMenu("Rating")
         for n in range(5, -1, -1):
             rating.addAction(("★" * n) or "No rating", lambda n=n: self.set_rating(self.selected_paths(), n))

@@ -14,6 +14,7 @@ Player / MusicBee / Mp3tag write it), even though Plex keeps its own ratings.
 from __future__ import annotations
 
 import os
+import re
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
 
@@ -46,13 +47,13 @@ WRITABLE = {".mp3", ".flac"}
 
 # Text fields shown and edited in the app.
 TEXT_FIELDS = ["title", "artist", "album_artist", "album", "year", "genre",
-               "track", "track_total", "disc", "disc_total", "language", "tempo"]
+               "track", "track_total", "disc", "disc_total", "edition", "language", "tempo"]
 
 FIELD_LABELS = {
     "title": "Title", "artist": "Artist", "album_artist": "Album Artist", "album": "Album",
     "year": "Year", "genre": "Genre", "track": "Track #", "track_total": "of",
     "disc": "Disc #", "disc_total": "of", "lyrics": "Lyrics", "rating": "Rating",
-    "language": "Language", "tempo": "Tempo",
+    "language": "Language", "tempo": "Tempo", "edition": "Edition",
 }
 
 POPM_EMAIL = "Windows Media Player 9 Series"
@@ -97,6 +98,7 @@ class Track:
     track_total: str = ""
     disc: str = ""
     disc_total: str = ""
+    edition: str = ""       # e.g. "Deluxe Edition" (ID3 TXXX:TSST, as MusicBee writes it)
     language: str = ""      # ID3 TLAN, e.g. "English"
     tempo: str = ""         # MusicBee's Tempo (ID3 TXXX:TEMPO), e.g. "Fast"
     rating: int = 0
@@ -143,8 +145,8 @@ class Details:
 # ---------------------------------------------------------------- helpers
 
 def _split_number(value: str) -> tuple[str, str]:
-    """"3/12" -> ("3", "12")."""
-    value = (value or "").strip()
+    """"3/12" -> ("3", "12"); "Disc 01/02" -> ("01", "02")."""
+    value = re.sub(r"^[^\d/]*(?=\d)", "", (value or "").strip())
     if "/" in value:
         a, b = value.split("/", 1)
         return a.strip(), b.strip()
@@ -246,17 +248,46 @@ def _read_mp3(d: Details) -> None:
     uslt = tags.getall("USLT")
     t.lyrics_in_file = any(str(u.text).strip() for u in uslt)
     t.language = _first(tags.get("TLAN"))
+    t.edition = _first(tags.get("TSST"))
+    musicbee_tempo = ""
     for frame in tags.getall("TXXX"):
         desc = frame.desc.upper()
         if desc == "REPLAYGAIN_TRACK_GAIN":
             t.gain = _first(frame.text)
         elif desc == "TEMPO":
             t.tempo = _first(frame.text)
+        elif desc == "TSST" and not t.edition:
+            t.edition = _first(frame.text)
+        elif desc not in KNOWN_TXXX:
+            d.extra[frame.desc] = " / ".join(str(x) for x in frame.text)
+    for frame in tags.getall("COMM"):
+        if not frame.desc:
+            if str(frame).strip():
+                d.extra["Comment"] = str(frame)
+            continue
+        if frame.desc.lower() == "songs-db_tempo":
+            musicbee_tempo = _first(frame.text)
+        else:
+            d.extra[friendly_comm(frame.desc)] = " / ".join(str(x) for x in frame.text)
+    t.tempo = t.tempo or musicbee_tempo
     d.lyrics = next((str(u.text) for u in uslt if str(u.text).strip()), "")
     pics = tags.getall("APIC")
     if pics:
         pic = next((p for p in pics if p.type == 3), pics[0])
         d.cover, d.cover_mime = pic.data, pic.mime
+
+
+KNOWN_TXXX = {"REPLAYGAIN_TRACK_GAIN", "REPLAYGAIN_TRACK_PEAK", "TEMPO", "TSST"}
+
+
+def friendly_comm(desc: str) -> str:
+    """MusicBee keeps its custom fields as comments: "Songs-DB_Custom1" -> "Custom 1 (MusicBee)"."""
+    m = re.fullmatch(r"songs-db_custom(\d+)", desc, re.IGNORECASE)
+    if m:
+        return f"Custom {m.group(1)} (MusicBee)"
+    if desc.lower().startswith("songs-db_"):
+        return desc[9:].replace("_", " ").title() + " (MusicBee)"
+    return f"Comment: {desc}"
 
 
 def _vorbis(tags, *keys: str) -> str:  # type: ignore[no-untyped-def]
@@ -275,6 +306,7 @@ def _read_flac(d: Details) -> None:
     t.title = _vorbis(tags, "title")
     t.language = _vorbis(tags, "language")
     t.tempo = _vorbis(tags, "tempo")
+    t.edition = _vorbis(tags, "discsubtitle", "edition")
     t.artist = _vorbis(tags, "artist")
     t.album_artist = _vorbis(tags, "albumartist", "album artist", "album_artist")
     t.album = _vorbis(tags, "album")
@@ -374,7 +406,7 @@ def _write_mp3(path: str, c: dict) -> None:
         text("TRCK", TRCK, value)
     if "disc" in c or "disc_total" in c:
         old = _split_number(_first(tags.get("TPOS")))
-        value = _join_number(c.get("disc", old[0]), c.get("disc_total", old[1]))
+        value = _join_number(c.get("disc", old[0]), c.get("disc_total", old[1]), pad=True)
         text("TPOS", TPOS, value)
     if "rating" in c:
         stars = max(0, min(5, int(c["rating"])))
@@ -395,11 +427,24 @@ def _write_mp3(path: str, c: dict) -> None:
     if "language" in c:
         text("TLAN", TLAN, c["language"].strip())
     if "tempo" in c:
-        for frame in list(tags.getall("TXXX")):
-            if frame.desc.upper() == "TEMPO":
-                tags.delall(frame.HashKey)
-        if c["tempo"].strip():
-            tags.add(TXXX(encoding=1, desc="TEMPO", text=[c["tempo"].strip()]))
+        # Older MusicBee versions kept Tempo in a comment: change it where it already is.
+        value = c["tempo"].strip()
+        txxx = [f for f in tags.getall("TXXX") if f.desc.upper() == "TEMPO"]
+        comm = [f for f in tags.getall("COMM") if f.desc.lower() == "songs-db_tempo"]
+        for frame in txxx + comm:
+            tags.delall(frame.HashKey)
+        if value:
+            if comm and not txxx:
+                tags.add(COMM(encoding=1, lang=comm[0].lang, desc=comm[0].desc, text=[value]))
+            else:
+                tags.add(TXXX(encoding=1, desc="TEMPO", text=[value]))
+    if "edition" in c:
+        # ID3v2.3 has no "disc subtitle" frame, so MusicBee writes TXXX:TSST; do the same.
+        tags.delall("TSST")
+        for frame in [f for f in tags.getall("TXXX") if f.desc.upper() == "TSST"]:
+            tags.delall(frame.HashKey)
+        if c["edition"].strip():
+            tags.add(TXXX(encoding=1, desc="TSST", text=[c["edition"].strip()]))
     if "gain" in c:
         for frame in list(tags.getall("TXXX")):
             if frame.desc.upper() in ("REPLAYGAIN_TRACK_GAIN", "REPLAYGAIN_TRACK_PEAK"):
@@ -433,7 +478,8 @@ def _write_flac(path: str, c: dict) -> None:
 
     simple = {"title": "title", "artist": "artist", "album_artist": "albumartist", "album": "album",
               "year": "date", "track": "tracknumber", "track_total": "tracktotal",
-              "disc": "discnumber", "disc_total": "disctotal", "language": "language", "tempo": "tempo"}
+              "disc": "discnumber", "disc_total": "disctotal", "language": "language", "tempo": "tempo",
+              "edition": "discsubtitle"}
     aliases = {"albumartist": ("album artist", "album_artist"), "tracktotal": ("totaltracks",),
                "disctotal": ("totaldiscs",), "date": ("year",)}
     for key, vorbis in simple.items():
