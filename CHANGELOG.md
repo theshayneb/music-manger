@@ -1,5 +1,23 @@
 # Changelog
 
+## 0.3.0
+
+- **Album view** (the Library opens in it; **F3** or **▦ Layout** switches to the song list and back), laid out like
+  MusicBee's album and tracks view:
+  - an **artist heading** (by Sort Artist, so "The Vaccines" sorts under V);
+  - each album with its **cover** and, to the right of it, **Album (Year)**, the **album rating** (average of the
+    rated songs, in half stars), **Genre**, **Tracks / Album** (e.g. 04 / 13) and the **album's length**;
+  - its songs split by **album side**: headings like *Disc 01*, *Deluxe Edition • Disc 01*, *iTunes Version*,
+    with a blank line before each;
+  - sorted Sort Artist / Year / Disc-Track# / Title.
+  - Click a cover to select the whole album (then edit all its songs at once).
+  - **▦ Layout** menu: headings by Artist, Genre, Year or nothing; albums by year or title; small, medium or large
+    covers; edition/disc headings and the blank lines on or off. Right-click the column headers to choose columns
+    (#, Title, Artist, Album Artist, Rating, Plays and Time by default).
+- **Edition** is kept the same in MusicBee's own "Edition" custom field (the `Songs-DB_Custom` comment that holds
+  it, found from your library), so MusicBee and Music Manager always agree.
+- Reads **Sort Artist** (ID3 TSO2/TSOP) for sorting.
+
 ## 0.2.1
 
 - **Files that can't be read** ("can't sync to MPEG frame"): the Tags panel now says what's wrong, e.g. "This is

@@ -126,3 +126,28 @@ def test_broken_file_shows_why_and_can_be_repaired(app, song, tmp_path, monkeypa
     wait(app, window, 15, until=lambda: not window._busy and not window.model.tracks[0].error)
     assert not window.model.tracks[0].error and window.model.tracks[0].title == "Lunar Eclipse"
     window.close()
+
+
+@needs_ffmpeg
+def test_album_view(app, song, tmp_path):
+    from music_manager.ui.main_window import MainWindow
+
+    for n, disc, ed, title in (("02", "01", "", "Halo"), ("08", "01", "Deluxe Edition", "Beautiful"),
+                               ("01", "02", "", "Single Ladies")):
+        p = song(f"music/Beyoncé - {title}.mp3", seconds=1)
+        tags.write(str(p), {"title": title, "artist": "Beyoncé", "album": "I Am... Sasha Fierce", "year": "2008",
+                            "track": n, "disc": disc, "disc_total": "02", "edition": ed})
+    music = tmp_path / "music"
+    settings = Settings(library_folder=str(music), last_view="library")
+    window = MainWindow(settings, FFMPEG)
+    window.show()
+    wait(app, window, 5, until=lambda: len(window.album_model.order()) == 3)
+    assert window.album_mode()
+    assert [t.title for t in window.order()] == ["Halo", "Beautiful", "Single Ladies"]
+    subs = [r.text for r in window.album_model.rows if r.kind == "sub"]
+    assert subs == ["Disc 01", "Deluxe Edition • Disc 01", "Disc 02"]
+    window._album_clicked(window.album_model.index(window.album_model.row_of(str(music / "Beyoncé - Halo.mp3")), 0))
+    assert len(window.selected_tracks()) == 3
+    window.set_mode("list")
+    assert not window.album_mode() and len(window.selected_tracks()) == 3
+    window.close()

@@ -132,7 +132,7 @@ def test_musicbee_extra_tags_are_read_and_kept(song):
     id3.save(path, v2_version=3)
     d = tags.read(path, with_details=True)
     assert (d.track.disc, d.track.disc_total, d.track.edition, d.track.tempo) == ("01", "02", "Deluxe Edition", "Slow")
-    assert d.extra == {"Custom 1 (MusicBee)": "English", "Custom 2 (MusicBee)": "Deluxe Edition"}
+    assert d.extra == {"Custom 1 (MusicBee)": "English"} and d.track.edition_field == "Songs-DB_Custom2"
 
     tags.write(path, {"tempo": "Medium", "edition": "Deluxe Edition", "title": "That's Why You're Beautiful"})
     raw = ID3(path, translate=False)
@@ -156,3 +156,30 @@ def test_play_count_is_shown_from_whichever_frame_has_it(song):
     raw = ID3(path, translate=False)
     assert raw.getall("PCNT")[0].count == 41 and raw.getall("POPM")[0].count == 12
     assert tags.read_track(path).plays == 41
+
+
+def test_musicbee_edition_custom_field_follows_the_edition(song, monkeypatch):
+    from mutagen.id3 import COMM, TSO2, TXXX
+
+    path = str(song("e.mp3"))
+    id3 = ID3()
+    id3.add(TXXX(encoding=1, desc="TSST", text=["Deluxe Edition"]))
+    id3.add(COMM(encoding=1, lang="eng", desc="Songs-DB_Custom2", text=["Deluxe Edition"]))
+    id3.add(COMM(encoding=1, lang="eng", desc="Songs-DB_Custom1", text=["English"]))
+    id3.add(TSO2(encoding=1, text=["Knowles, Beyoncé"]))
+    id3.save(path, v2_version=3)
+    d = tags.read(path, with_details=True)
+    assert d.track.edition == "Deluxe Edition" and d.track.edition_field == "Songs-DB_Custom2"
+    assert d.extra == {"Custom 1 (MusicBee)": "English"} and d.track.sort_artist == "Knowles, Beyoncé"
+
+    tags.write(path, {"edition": "Platinum Edition"})
+    raw = ID3(path, translate=False)
+    assert str(raw["TXXX:TSST"]) == "Platinum Edition" and str(raw["COMM:Songs-DB_Custom2:eng"]) == "Platinum Edition"
+    assert str(raw["COMM:Songs-DB_Custom1:eng"]) == "English"
+
+    # A song with no edition yet gets it in the custom field the library uses.
+    other = str(song("f.mp3"))
+    monkeypatch.setattr(tags, "EDITION_COMM", "Songs-DB_Custom2")
+    tags.write(other, {"edition": "iTunes Version"})
+    raw = ID3(other, translate=False)
+    assert str(raw["COMM:Songs-DB_Custom2:eng"]) == "iTunes Version" and str(raw["TXXX:TSST"]) == "iTunes Version"

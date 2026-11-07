@@ -22,6 +22,7 @@ Windows SmartScreen may warn the first time because the app isn't signed: choose
 
 | Do this | How |
 |---|---|
+| Album view / song list | **F3** or **▦ Layout**. The album view shows each album's cover, Album (Year), rating, genre, tracks and length, with its songs split by edition and disc. **▦ Layout** chooses the headings (artist, genre, year), album order and cover size. Click a cover to select the album |
 | Play | Double-click a song or press **Enter**. **Space** play/pause, **Ctrl+←** back 10 s, **Ctrl+→** forward 30 s, **Ctrl+↑/↓** previous/next |
 | Keep (Review only) | **K** or **✔ Keep**. A preview shows each song's new name and what will happen before anything changes |
 | Delete | **Delete** (Recycle Bin, with its lyrics file) |

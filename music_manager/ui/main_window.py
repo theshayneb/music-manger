@@ -25,8 +25,10 @@ from PySide6.QtWidgets import (
     QScrollArea,
     QSizePolicy,
     QSplitter,
+    QStackedWidget,
     QTableView,
     QToolBar,
+    QToolButton,
     QVBoxLayout,
     QWidget,
 )
@@ -36,6 +38,7 @@ from ..core import convert, fileops, keep, library, loudness, naming, repair, ta
 from ..core.ffmpeg import find_ffmpeg
 from ..core.settings import Settings
 from ..core.tags import Track
+from .albums import AlbumModel, ArtDelegate, thumbnail
 from .dialogs import PlanDialog, SettingsDialog, ask_text
 from .editor import TagEditor
 from .lookup import LookupDialog
@@ -54,7 +57,8 @@ SHOW_FILTERS = [
     ("low", "Low bitrate (under 192 kbps)"),
 ]
 SCAN_CHUNK = 150
-COLUMNS_STATE_KEY = "table3"  # changed when columns are added, so the saved layout isn't misapplied
+COLUMNS_STATE_KEY = "table3"
+ALBUM_COLUMNS_KEY = "albums1"  # changed when columns are added, so the saved layout isn't misapplied
 
 
 class MainWindow(QMainWindow):
@@ -64,7 +68,9 @@ class MainWindow(QMainWindow):
         self.ffmpeg = ffmpeg if ffmpeg is not None else find_ffmpeg(settings.ffmpeg_path or None)
         self.bg = Background(1)        # tag writes, conversions, file operations (in order)
         self.scan_bg = Background(1)   # reading folders
+        self.cover_bg = Background(2)  # album covers for the album view
         self.cache = library.TagCache()
+        tags.EDITION_COMM = settings.edition_comm
         self.view = settings.last_view if settings.last_view in VIEWS else "review"
         self._scan_gen = 0
         self._details_gen = 0
@@ -117,13 +123,44 @@ class MainWindow(QMainWindow):
         header.setSectionsMovable(True)
         header.setStretchLastSection(True)
         header.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
-        header.customContextMenuRequested.connect(self._header_menu)
+        header.customContextMenuRequested.connect(lambda pos: self._header_menu(pos, self.table))
         header.setSectionResizeMode(QHeaderView.ResizeMode.Interactive)
 
+        self.album_model = AlbumModel(self.model)
+        self.album_model.layout.update(self.settings.album_layout)
+        self.album_model.cover_loader = self._load_cover
+        self.albums = QTableView()
+        self.albums.setModel(self.album_model)
+        self.albums.setItemDelegate(ArtDelegate(self.album_model, self.albums))
+        self.albums.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
+        self.albums.setSelectionMode(QAbstractItemView.SelectionMode.ExtendedSelection)
+        self.albums.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
+        self.albums.verticalHeader().setVisible(False)
+        self.albums.verticalHeader().setDefaultSectionSize(24)
+        self.albums.setShowGrid(False)
+        self.albums.setWordWrap(False)
+        self.albums.setVerticalScrollMode(QAbstractItemView.ScrollMode.ScrollPerPixel)
+        self.albums.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
+        aheader = self.albums.horizontalHeader()
+        aheader.setSectionsMovable(False)  # the album cells are spans, which don't survive moved columns
+        aheader.setStretchLastSection(True)
+        aheader.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
+        aheader.customContextMenuRequested.connect(lambda pos: self._header_menu(pos, self.albums))
+        self._album_timer = QTimer(self)
+        self._album_timer.setSingleShot(True)
+        self._album_timer.setInterval(60)
+        self._album_timer.timeout.connect(self._rebuild_albums)
+        for signal in (self.proxy.modelReset, self.proxy.rowsInserted, self.proxy.rowsRemoved,
+                       self.proxy.dataChanged, self.proxy.layoutChanged):
+            signal.connect(lambda *_: self._album_timer.start())
+
+        self.stack = QStackedWidget()
+        self.stack.addWidget(self.table)
+        self.stack.addWidget(self.albums)
         center = QWidget()
         cv = QVBoxLayout(center)
         cv.setContentsMargins(0, 0, 0, 0)
-        cv.addWidget(self.table, 1)
+        cv.addWidget(self.stack, 1)
 
         splitter = QSplitter()
         splitter.addWidget(left)
@@ -156,9 +193,11 @@ class MainWindow(QMainWindow):
         self.statusBar().addPermanentWidget(self.count_label)
 
         self.views.currentItemChanged.connect(self._view_clicked)
-        self.table.doubleClicked.connect(lambda index: self.play_row(index.row()))
-        self.table.selectionModel().selectionChanged.connect(lambda *_: self._selection_changed())
-        self.table.customContextMenuRequested.connect(self._context_menu)
+        for view in (self.table, self.albums):
+            view.doubleClicked.connect(lambda index, view=view: self.play_row(index.row()))
+            view.selectionModel().selectionChanged.connect(lambda *_, view=view: self._selection_changed(view))
+            view.customContextMenuRequested.connect(lambda pos, view=view: self._context_menu(pos, view))
+        self.albums.clicked.connect(self._album_clicked)
         self.editor.save_requested.connect(self.save_tags)
         self.editor.rating_requested.connect(self.set_rating)
         self.editor.lookup_requested.connect(self.lookup_selected)
@@ -219,10 +258,19 @@ class MainWindow(QMainWindow):
         spacer = QWidget()
         spacer.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
         bar.addWidget(spacer)
+        self.layout_btn = QToolButton()
+        self.layout_btn.setText("▦ Layout")
+        self.layout_btn.setToolTip("Albums or song list, grouping and sorting (F3 switches between the two)")
+        self.layout_btn.setPopupMode(QToolButton.ToolButtonPopupMode.InstantPopup)
+        self.layout_menu = QMenu(self)
+        self.layout_menu.aboutToShow.connect(self._fill_layout_menu)
+        self.layout_btn.setMenu(self.layout_menu)
+        bar.addWidget(self.layout_btn)
         action("⟳ Refresh", self.reload, "F5", "Read the folder again")
         action("⚙ Settings", self.open_settings, "Ctrl+,")
 
         action("Save tags", self.editor.save, "Ctrl+S", toolbar=False)
+        action("Albums / song list", self.toggle_layout, "F3", toolbar=False)
         action("Look up online", self.lookup_selected, "Ctrl+L", toolbar=False)
         action("Search", lambda: (self.search.setFocus(), self.search.selectAll()), "Ctrl+F", toolbar=False)
         action("Rename one", self.rename_one, "F2", toolbar=False)
@@ -237,8 +285,8 @@ class MainWindow(QMainWindow):
                    toolbar=False)
         # Enter plays the selected song, but only in the list (in the tag boxes it saves).
         for keys in ("Return", "Enter"):
-            QShortcut(QKeySequence(keys), self.table, self.play_selected,
-                      context=Qt.ShortcutContext.WidgetShortcut)
+            for view in (self.table, self.albums):
+                QShortcut(QKeySequence(keys), view, self.play_selected, context=Qt.ShortcutContext.WidgetShortcut)
 
     def _restore_layout(self) -> None:
         if self.settings.window_geometry:
@@ -258,7 +306,24 @@ class MainWindow(QMainWindow):
                 if key in widths:
                     header.resizeSection(col, widths[key])
 
+    def _restore_album_columns(self) -> None:
+        header = self.albums.horizontalHeader()
+        state = self.settings.column_state.get(ALBUM_COLUMNS_KEY)
+        if state and header.restoreState(QByteArray.fromBase64(state.encode())):
+            return
+        shown = {"art", "track", "title", "artist", "album_artist", "rating", "plays", "length"}
+        keys = [k for k, _ in self.album_model.columns]
+        for col, key in enumerate(keys):
+            header.setSectionHidden(col, key not in shown)
+        widths = {"art": 380, "track": 40, "title": 300, "artist": 200, "album_artist": 180, "rating": 80,
+                  "plays": 50, "length": 55}
+
+        for col, key in enumerate(keys):
+            if key in widths:
+                header.resizeSection(col, widths[key])
+
     def _start(self) -> None:
+        self._restore_album_columns()
         if not self.settings.review_folder and not self.settings.library_folder:
             self.open_settings(first_run=True)
         for row in range(self.views.count()):
@@ -286,6 +351,7 @@ class MainWindow(QMainWindow):
 
     def reload(self) -> None:
         self._stale.discard(self.view)
+        self._apply_mode()
         folder = self.folder()
         is_review = self.view == "review"
         self.keep_action.setEnabled(is_review)
@@ -330,7 +396,7 @@ class MainWindow(QMainWindow):
             self.model.append(tracks or [])
             if first:
                 self._sort_default()
-                self._select_row(0)
+                QTimer.singleShot(100, self._select_first)
             end = start + len(chunk)
             if end < len(paths):
                 self.status.setText(f"Reading tags… {end} of {len(paths)}")
@@ -352,38 +418,82 @@ class MainWindow(QMainWindow):
         self.count_label.setText(text)
 
     # ================================================================ selection
-    def selected_rows(self) -> list[int]:
-        """Source-model rows, in the order shown."""
-        rows = sorted({i.row() for i in self.table.selectionModel().selectedRows()})
-        return [self.proxy.mapToSource(self.proxy.index(r, 0)).row() for r in rows]
+    # The song list and the album view show the same songs; these work on whichever is shown.
+    def album_mode(self) -> bool:
+        return self.settings.view_modes.get(self.view, "list") == "albums"
+
+    def active(self) -> QTableView:
+        return self.albums if self.album_mode() else self.table
+
+    def _track_at(self, row: int) -> Track | None:
+        if self.album_mode():
+            return self.album_model.track(row)
+        index = self.proxy.index(row, 0)
+        return self.model.tracks[self.proxy.mapToSource(index).row()] if index.isValid() else None
+
+    def _row_of(self, path: str) -> int:
+        if self.album_mode():
+            return self.album_model.row_of(path)
+        row = self.model.row_of(path)
+        return self.proxy.mapFromSource(self.model.index(row, 0)).row() if row >= 0 else -1
+
+    def order(self) -> list[Track]:
+        """The songs in the order shown."""
+        if self.album_mode():
+            return self.album_model.order()
+        return [self.model.tracks[self.proxy.mapToSource(self.proxy.index(r, 0)).row()]
+                for r in range(self.proxy.rowCount())]
 
     def selected_tracks(self) -> list[Track]:
-        return [self.model.tracks[r] for r in self.selected_rows()]
+        rows = sorted({i.row() for i in self.active().selectionModel().selectedRows(1 if self.album_mode() else 0)})
+        if self.album_mode() and not rows:
+            rows = sorted({i.row() for i in self.active().selectionModel().selectedIndexes()})
+        out = [self._track_at(r) for r in rows]
+        return [t for t in out if t is not None]
 
     def selected_paths(self) -> list[str]:
         return [t.path for t in self.selected_tracks()]
 
-    def _select_row(self, proxy_row: int) -> None:
-        count = self.proxy.rowCount()
-        if count == 0:
+    def _select_rows(self, rows: list[int]) -> None:
+        view = self.active()
+        model = view.model()
+        selection = view.selectionModel()
+        if not rows:
+            selection.clearSelection()
             return
-        proxy_row = max(0, min(proxy_row, count - 1))
-        index = self.proxy.index(proxy_row, 0)
-        self.table.selectionModel().setCurrentIndex(
-            index, QItemSelectionModel.SelectionFlag.ClearAndSelect | QItemSelectionModel.SelectionFlag.Rows)
-        self.table.scrollTo(index)
+        from PySide6.QtCore import QItemSelection
+
+        sel = QItemSelection()
+        last = model.columnCount() - 1
+        for r in rows:
+            sel.select(model.index(r, 1 if self.album_mode() else 0), model.index(r, last))
+        selection.setCurrentIndex(model.index(rows[0], 1 if self.album_mode() else 0),
+                                  QItemSelectionModel.SelectionFlag.NoUpdate)
+        selection.select(sel, QItemSelectionModel.SelectionFlag.ClearAndSelect)
+        view.scrollTo(model.index(rows[0], 1 if self.album_mode() else 0))
+
+    def _select_first(self) -> None:
+        order = self.order()
+        if order:
+            self._select_path(order[0].path)
 
     def _select_path(self, path: str) -> bool:
-        row = self.model.row_of(path)
+        row = self._row_of(path)
         if row < 0:
             return False
-        proxy_index = self.proxy.mapFromSource(self.model.index(row, 0))
-        if not proxy_index.isValid():
-            return False
-        self._select_row(proxy_index.row())
+        self._select_rows([row])
         return True
 
-    def _selection_changed(self) -> None:
+    def _album_clicked(self, index) -> None:  # type: ignore[no-untyped-def]
+        """Clicking an album's cover selects all its songs."""
+        if index.column() == 0 and self.album_mode():
+            rows = self.album_model.album_rows(index.row())
+            if rows:
+                self._select_rows(rows)
+
+    def _selection_changed(self, view: QTableView | None = None) -> None:
+        if view is not None and view is not self.active():
+            return
         tracks = self.selected_tracks()
         if self.editor.has_unsaved() and [t.path for t in tracks] != [t.path for t in self.editor.tracks]:
             if not self._confirm_unsaved():
@@ -418,12 +528,10 @@ class MainWindow(QMainWindow):
         return True
 
     # ================================================================ playing
-    def play_row(self, proxy_row: int) -> None:
-        index = self.proxy.index(proxy_row, 0)
-        if not index.isValid():
-            return
-        track = self.model.tracks[self.proxy.mapToSource(index).row()]
-        self.play_track(track)
+    def play_row(self, row: int) -> None:
+        track = self._track_at(row)
+        if track is not None:
+            self.play_track(track)
 
     def play_track(self, track: Track) -> None:
         if not self.player.available():
@@ -437,25 +545,25 @@ class MainWindow(QMainWindow):
         tracks = self.selected_tracks()
         if tracks:
             self.play_track(tracks[0])
-        elif self.proxy.rowCount():
-            self._select_row(0)
-            self.play_row(0)
-
-    def _playing_proxy_row(self) -> int:
-        row = self.model.row_of(self.player.path or self.model.playing)
-        if row < 0:
-            return -1
-        return self.proxy.mapFromSource(self.model.index(row, 0)).row()
+            return
+        order = self.order()
+        if order:
+            self._select_path(order[0].path)
+            self.play_track(order[0])
 
     def play_relative(self, step: int) -> None:
-        current = self._playing_proxy_row()
-        if current < 0:
-            rows = sorted({i.row() for i in self.table.selectionModel().selectedRows()})
-            current = rows[0] - step if rows else -step
-        target = current + step
-        if 0 <= target < self.proxy.rowCount():
-            self._select_row(target)
-            self.play_row(target)
+        order = self.order()
+        keys = [os.path.normcase(t.path) for t in order]
+        current = self.player.path or self.model.playing
+        if current and os.path.normcase(current) in keys:
+            pos = keys.index(os.path.normcase(current))
+        else:
+            selected = self.selected_tracks()
+            pos = keys.index(os.path.normcase(selected[0].path)) - step if selected else -step
+        target = pos + step
+        if 0 <= target < len(order):
+            self._select_path(order[target].path)
+            self.play_track(order[target])
 
     def _song_finished(self) -> None:
         if self.settings.autoplay_next:
@@ -622,14 +730,13 @@ class MainWindow(QMainWindow):
     def _row_after(self, paths: list[str]) -> str | None:
         """The song shown after the last of paths (to select once they're gone)."""
         keys = {os.path.normcase(p) for p in paths}
-        rows = [self.proxy.mapFromSource(self.model.index(self.model.row_of(p), 0)).row() for p in paths]
-        rows = [r for r in rows if r >= 0]
-        if not rows:
+        order = self.order()
+        positions = [i for i, t in enumerate(order) if os.path.normcase(t.path) in keys]
+        if not positions:
             return None
-        for r in list(range(max(rows) + 1, self.proxy.rowCount())) + list(range(min(rows) - 1, -1, -1)):
-            track = self.model.tracks[self.proxy.mapToSource(self.proxy.index(r, 0)).row()]
-            if os.path.normcase(track.path) not in keys:
-                return track.path
+        for i in list(range(max(positions) + 1, len(order))) + list(range(min(positions) - 1, -1, -1)):
+            if os.path.normcase(order[i].path) not in keys:
+                return order[i].path
         return None
 
     def _after_removal(self, next_path: str | None, playing: bool) -> None:
@@ -790,7 +897,7 @@ class MainWindow(QMainWindow):
     def flash(self, text: str) -> None:
         self.status.setText(text)
 
-    def _context_menu(self, pos) -> None:  # type: ignore[no-untyped-def]
+    def _context_menu(self, pos, view: QTableView) -> None:  # type: ignore[no-untyped-def]
         tracks = self.selected_tracks()
         if not tracks:
             return
@@ -818,18 +925,24 @@ class MainWindow(QMainWindow):
         menu.addAction("Open in default app", lambda: QDesktopServices.openUrl(QUrl.fromLocalFile(tracks[0].path)))
         menu.addAction("Copy path", lambda: QGuiApplication.clipboard().setText(
             "\n".join(t.path for t in tracks)))
-        menu.exec(self.table.viewport().mapToGlobal(pos))
+        menu.exec(view.viewport().mapToGlobal(pos))
 
-    def _header_menu(self, pos) -> None:  # type: ignore[no-untyped-def]
-        header = self.table.horizontalHeader()
+    def _header_menu(self, pos, view: QTableView) -> None:  # type: ignore[no-untyped-def]
+        header = view.horizontalHeader()
+        model = view.model()
         menu = QMenu(self)
-        for col in range(self.model.columnCount()):
-            title = self.model.headerData(col, Qt.Orientation.Horizontal)
+        for col in range(model.columnCount()):
+            title = model.headerData(col, Qt.Orientation.Horizontal)
             a = menu.addAction(title)
             a.setCheckable(True)
             a.setChecked(not header.isSectionHidden(col))
-            a.toggled.connect(lambda on, col=col: header.setSectionHidden(col, not on))
+            a.toggled.connect(lambda on, col=col, view=view: self._show_column(view, col, on))
         menu.exec(header.mapToGlobal(pos))
+
+    def _show_column(self, view: QTableView, col: int, on: bool) -> None:
+        view.horizontalHeader().setSectionHidden(col, not on)
+        if view is self.albums:
+            self.album_model.apply_spans(self.albums)
 
     def show_in_explorer(self) -> None:
         tracks = self.selected_tracks()
@@ -855,6 +968,109 @@ class MainWindow(QMainWindow):
             self._stale.update(VIEWS)
             self.reload()
 
+    # ================================================================ album view
+    def _apply_mode(self) -> None:
+        self.stack.setCurrentWidget(self.active())
+        self.layout_btn.setText("▦ Albums" if self.album_mode() else "☰ Song list")
+        if self.album_mode():
+            self._rebuild_albums()
+
+    def toggle_layout(self) -> None:
+        self.set_mode("list" if self.album_mode() else "albums")
+
+    def set_mode(self, mode: str) -> None:
+        selected = self.selected_paths()
+        self.settings.view_modes[self.view] = mode
+        self._apply_mode()
+        rows = [r for r in (self._row_of(p) for p in selected) if r >= 0]
+        if rows:
+            self._select_rows(rows)
+        self._load_details(self.selected_tracks())
+
+    def set_album_layout(self, key: str, value) -> None:  # type: ignore[no-untyped-def]
+        self.album_model.layout[key] = value
+        self.settings.album_layout = dict(self.album_model.layout)
+        if key == "art":
+            self.album_model.covers.clear()
+        self._rebuild_albums()
+
+    def _fill_layout_menu(self) -> None:
+        from PySide6.QtGui import QActionGroup
+
+        from ..core.albums import ALBUM_ORDERS, GROUPINGS
+
+        menu = self.layout_menu
+        menu.clear()
+        layout = self.album_model.layout
+
+        def radio(title: str, items: dict, current, slot) -> None:  # type: ignore[no-untyped-def]
+            menu.addSection(title)
+            group = QActionGroup(menu)
+            for value, label in items.items():
+                a = menu.addAction(label)
+                a.setCheckable(True)
+                a.setChecked(value == current)
+                group.addAction(a)
+                a.triggered.connect(lambda _=False, value=value: slot(value))
+
+        radio("Show", {"albums": "Albums (cover, details and songs)", "list": "Song list"},
+              "albums" if self.album_mode() else "list", self.set_mode)
+        radio("Album view: headings", GROUPINGS, layout.get("group", "artist"),
+              lambda v: self.set_album_layout("group", v))
+        radio("Album view: albums in order of", ALBUM_ORDERS, layout.get("order", "year"),
+              lambda v: self.set_album_layout("order", v))
+        radio("Album view: artwork", {120: "Small", 150: "Medium", 200: "Large"}, layout.get("art", 150),
+              lambda v: self.set_album_layout("art", v))
+        menu.addSection("Album view: inside an album")
+        for key, label in (("sides", "Headings for editions and discs (e.g. Deluxe Edition • Disc 01)"),
+                           ("blank", "Blank line before those headings")):
+            a = menu.addAction(label)
+            a.setCheckable(True)
+            a.setChecked(bool(layout.get(key, True)))
+            a.toggled.connect(lambda on, key=key: self.set_album_layout(key, on))
+
+    def _rebuild_albums(self) -> None:
+        if not self.album_mode():
+            return
+        selected = self.selected_paths()
+        scroll = self.albums.verticalScrollBar().value()
+        tracks = [self.model.tracks[self.proxy.mapToSource(self.proxy.index(r, 0)).row()]
+                  for r in range(self.proxy.rowCount())]
+        self.albums.selectionModel().blockSignals(True)
+        self.album_model.rebuild(tracks)
+        self.album_model.apply_spans(self.albums)
+        rows = [r for r in (self.album_model.row_of(p) for p in selected) if r >= 0]
+        if rows:
+            from PySide6.QtCore import QItemSelection
+
+            sel = QItemSelection()
+            for r in rows:
+                sel.select(self.album_model.index(r, 1), self.album_model.index(r, self.album_model.columnCount() - 1))
+            self.albums.selectionModel().select(sel, QItemSelectionModel.SelectionFlag.ClearAndSelect)
+        self.albums.selectionModel().blockSignals(False)
+        self.albums.verticalScrollBar().setValue(scroll)
+        # Learn which MusicBee custom field holds "Edition", so new editions are written there too.
+        if not tags.EDITION_COMM:
+            fields = [t.edition_field for t in tracks if t.edition_field]
+            if fields:
+                tags.EDITION_COMM = max(set(fields), key=fields.count)
+                self.settings.edition_comm = tags.EDITION_COMM
+
+    def _load_cover(self, album) -> None:  # type: ignore[no-untyped-def]
+        from PySide6.QtGui import QPixmap
+
+        size = self.album_model.art_size() * 2  # sharp on high-DPI screens
+        path, key = album.cover_path, album.key
+
+        def work():  # type: ignore[no-untyped-def]
+            return thumbnail(path, size)
+
+        def done(image, _err) -> None:  # type: ignore[no-untyped-def]
+            if image is not None and not image.isNull():
+                self.album_model.set_cover(key, QPixmap.fromImage(image))
+
+        self.cover_bg.run(work, done)
+
     # ================================================================ closing
     def closeEvent(self, event) -> None:  # type: ignore[no-untyped-def]
         self._confirm_unsaved()
@@ -865,12 +1081,16 @@ class MainWindow(QMainWindow):
         self.settings.window_state = bytes(self.saveState().toBase64()).decode()
         header_state = self.table.horizontalHeader().saveState().toBase64()
         self.settings.column_state[COLUMNS_STATE_KEY] = bytes(header_state).decode()
+        album_state = self.albums.horizontalHeader().saveState().toBase64()
+        self.settings.column_state[ALBUM_COLUMNS_KEY] = bytes(album_state).decode()
+        self.settings.album_layout = dict(self.album_model.layout)
         try:
             self.settings.save()
         except OSError:
             pass
         self.bg.shutdown()
         self.scan_bg.shutdown()
+        self.cover_bg.shutdown()
         self.cache.save()
         super().closeEvent(event)
 

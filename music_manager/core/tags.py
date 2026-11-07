@@ -91,6 +91,7 @@ class Track:
     title: str = ""
     artist: str = ""
     album_artist: str = ""
+    sort_artist: str = ""   # ID3 TSO2/TSOP (MusicBee's "Sort Artist"); read only
     album: str = ""
     year: str = ""
     genre: str = ""
@@ -99,6 +100,7 @@ class Track:
     disc: str = ""
     disc_total: str = ""
     edition: str = ""       # e.g. "Deluxe Edition" (ID3 TXXX:TSST, as MusicBee writes it)
+    edition_field: str = "" # the MusicBee custom field that also holds the edition, e.g. "Songs-DB_Custom2"
     language: str = ""      # ID3 TLAN, e.g. "English"
     tempo: str = ""         # MusicBee's Tempo (ID3 TXXX:TEMPO), e.g. "Fast"
     rating: int = 0
@@ -303,6 +305,8 @@ def _read_mp3(d: Details) -> None:
     t.title = _first(tags.get("TIT2"))
     t.artist = _first(tags.get("TPE1"))
     t.album_artist = _first(tags.get("TPE2"))
+    t.sort_artist = _first(tags.get("TSO2")) or (
+        _first(tags.get("TSOP")) if not t.album_artist or t.album_artist == _first(tags.get("TPE1")) else "")
     t.album = _first(tags.get("TALB"))
     genre = tags.get("TCON")
     t.genre = "; ".join(genre.genres) if genre else ""
@@ -341,12 +345,16 @@ def _read_mp3(d: Details) -> None:
             if str(frame).strip():
                 d.extra["Comment"] = str(frame)
             continue
+        value = " / ".join(str(x) for x in frame.text)
         if frame.desc.lower() == "songs-db_tempo":
             musicbee_tempo = _first(frame.text)
         elif frame.desc.lower().replace("songs-db_", "").replace("_", "").replace(" ", "") in PLAY_COUNT_NAMES:
             pass
+        elif _is_edition_comm(frame.desc, value, t.edition):
+            t.edition_field = frame.desc
+            t.edition = t.edition or value.strip()
         else:
-            d.extra[friendly_comm(frame.desc)] = " / ".join(str(x) for x in frame.text)
+            d.extra[friendly_comm(frame.desc)] = value
     t.tempo = t.tempo or musicbee_tempo
     d.lyrics = next((str(u.text) for u in uslt if str(u.text).strip()), "")
     pics = tags.getall("APIC")
@@ -364,6 +372,19 @@ def _int(value: str) -> int:
         return max(0, int(float(value)))
     except (TypeError, ValueError):
         return 0
+
+
+# The MusicBee custom field the user keeps "Edition" in (e.g. "Songs-DB_Custom2"). Learned from the
+# library (a custom field holding the same value as TXXX:TSST) and set by the app; "" = not known yet.
+EDITION_COMM = ""
+
+
+def _is_edition_comm(desc: str, value: str, edition: str) -> bool:
+    if not desc.lower().startswith("songs-db_custom"):
+        return False
+    if EDITION_COMM and desc.lower() == EDITION_COMM.lower():
+        return True
+    return bool(edition) and value.strip().casefold() == edition.strip().casefold()
 
 
 def friendly_comm(desc: str) -> str:
@@ -397,6 +418,7 @@ def _read_flac(d: Details) -> None:
                   default=0)
     t.artist = _vorbis(tags, "artist")
     t.album_artist = _vorbis(tags, "albumartist", "album artist", "album_artist")
+    t.sort_artist = _vorbis(tags, "albumartistsort") or _vorbis(tags, "artistsort")
     t.album = _vorbis(tags, "album")
     t.genre = "; ".join(tags.get("genre", [])) if tags else ""
     t.year = _vorbis(tags, "date", "year")[:4]
@@ -528,11 +550,25 @@ def _write_mp3(path: str, c: dict) -> None:
                 tags.add(TXXX(encoding=1, desc="TEMPO", text=[value]))
     if "edition" in c:
         # ID3v2.3 has no "disc subtitle" frame, so MusicBee writes TXXX:TSST; do the same.
+        old_tsst = _first(tags.get("TSST")) or next(
+            (_first(f.text) for f in tags.getall("TXXX") if f.desc.upper() == "TSST"), "")
         tags.delall("TSST")
         for frame in [f for f in tags.getall("TXXX") if f.desc.upper() == "TSST"]:
             tags.delall(frame.HashKey)
         if c["edition"].strip():
             tags.add(TXXX(encoding=1, desc="TSST", text=[c["edition"].strip()]))
+        # MusicBee shows its own "Edition" custom field: keep it the same.
+        old_edition = old_tsst
+        comms = [f for f in tags.getall("COMM") if f.desc.lower().startswith("songs-db_custom") and (
+            (EDITION_COMM and f.desc.lower() == EDITION_COMM.lower())
+            or (old_edition and str(f).strip().casefold() == old_edition.casefold()))]
+        lang = comms[0].lang if comms else "eng"
+        descs = {f.desc for f in comms} or ({EDITION_COMM} if EDITION_COMM else set())
+        for frame in comms:
+            tags.delall(frame.HashKey)
+        if c["edition"].strip():
+            for desc in descs:
+                tags.add(COMM(encoding=1, lang=lang, desc=desc, text=[c["edition"].strip()]))
     if "gain" in c:
         for frame in list(tags.getall("TXXX")):
             if frame.desc.upper() in ("REPLAYGAIN_TRACK_GAIN", "REPLAYGAIN_TRACK_PEAK"):

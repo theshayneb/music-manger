@@ -55,6 +55,9 @@ class Settings:
     volume: int = 70
     theme: str = "dark"  # dark | light | system
     last_view: str = "review"
+    view_modes: dict[str, str] = field(default_factory=lambda: {"review": "list", "library": "albums"})
+    album_layout: dict = field(default_factory=dict)
+    edition_comm: str = ""  # MusicBee custom field that holds "Edition" (learned from the library)
     column_state: dict[str, str] = field(default_factory=dict)
     recent_move_folders: list[str] = field(default_factory=list)
     ffmpeg_path: str = ""
