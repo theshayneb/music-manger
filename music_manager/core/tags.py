@@ -28,6 +28,7 @@ from mutagen.id3 import (
     TCON,
     TDRC,
     TIT2,
+    TLAN,
     TPE1,
     TPE2,
     TPOS,
@@ -45,12 +46,13 @@ WRITABLE = {".mp3", ".flac"}
 
 # Text fields shown and edited in the app.
 TEXT_FIELDS = ["title", "artist", "album_artist", "album", "year", "genre",
-               "track", "track_total", "disc", "disc_total"]
+               "track", "track_total", "disc", "disc_total", "language", "tempo"]
 
 FIELD_LABELS = {
     "title": "Title", "artist": "Artist", "album_artist": "Album Artist", "album": "Album",
     "year": "Year", "genre": "Genre", "track": "Track #", "track_total": "of",
     "disc": "Disc #", "disc_total": "of", "lyrics": "Lyrics", "rating": "Rating",
+    "language": "Language", "tempo": "Tempo",
 }
 
 POPM_EMAIL = "Windows Media Player 9 Series"
@@ -95,6 +97,8 @@ class Track:
     track_total: str = ""
     disc: str = ""
     disc_total: str = ""
+    language: str = ""      # ID3 TLAN, e.g. "English"
+    tempo: str = ""         # MusicBee's Tempo (ID3 TXXX:TEMPO), e.g. "Fast"
     rating: int = 0
     has_cover: bool = False
     lyrics_in_file: bool = False
@@ -147,11 +151,19 @@ def _split_number(value: str) -> tuple[str, str]:
     return value, ""
 
 
-def _join_number(number: str, total: str) -> str:
+def _join_number(number: str, total: str, pad: bool = False) -> str:
+    """("3", "11") -> "3/11"; with pad (track numbers): "03/11", as the existing library has them."""
     number, total = (number or "").strip(), (total or "").strip()
     if not number:
         return ""
+    if pad:
+        number = pad_track(number)
+        total = pad_track(total) if total else ""
     return f"{number}/{total}" if total else number
+
+
+def pad_track(value: str) -> str:
+    return value.zfill(2) if value.isdigit() else value
 
 
 def _first(values) -> str:  # type: ignore[no-untyped-def]
@@ -233,9 +245,13 @@ def _read_mp3(d: Details) -> None:
     t.has_cover = bool(tags.getall("APIC"))
     uslt = tags.getall("USLT")
     t.lyrics_in_file = any(str(u.text).strip() for u in uslt)
+    t.language = _first(tags.get("TLAN"))
     for frame in tags.getall("TXXX"):
-        if frame.desc.upper() == "REPLAYGAIN_TRACK_GAIN":
+        desc = frame.desc.upper()
+        if desc == "REPLAYGAIN_TRACK_GAIN":
             t.gain = _first(frame.text)
+        elif desc == "TEMPO":
+            t.tempo = _first(frame.text)
     d.lyrics = next((str(u.text) for u in uslt if str(u.text).strip()), "")
     pics = tags.getall("APIC")
     if pics:
@@ -257,6 +273,8 @@ def _read_flac(d: Details) -> None:
     _info(t, audio)
     tags = audio.tags or {}
     t.title = _vorbis(tags, "title")
+    t.language = _vorbis(tags, "language")
+    t.tempo = _vorbis(tags, "tempo")
     t.artist = _vorbis(tags, "artist")
     t.album_artist = _vorbis(tags, "albumartist", "album artist", "album_artist")
     t.album = _vorbis(tags, "album")
@@ -352,7 +370,7 @@ def _write_mp3(path: str, c: dict) -> None:
             tags.add(TDRC(encoding=1, text=[c["year"].strip()]))
     if "track" in c or "track_total" in c:
         old = _split_number(_first(tags.get("TRCK")))
-        value = _join_number(c.get("track", old[0]), c.get("track_total", old[1]))
+        value = _join_number(c.get("track", old[0]), c.get("track_total", old[1]), pad=True)
         text("TRCK", TRCK, value)
     if "disc" in c or "disc_total" in c:
         old = _split_number(_first(tags.get("TPOS")))
@@ -374,6 +392,14 @@ def _write_mp3(path: str, c: dict) -> None:
         if c["cover"]:
             data, mime = c["cover"]
             tags.add(APIC(encoding=1, mime=mime, type=3, desc="", data=data))
+    if "language" in c:
+        text("TLAN", TLAN, c["language"].strip())
+    if "tempo" in c:
+        for frame in list(tags.getall("TXXX")):
+            if frame.desc.upper() == "TEMPO":
+                tags.delall(frame.HashKey)
+        if c["tempo"].strip():
+            tags.add(TXXX(encoding=1, desc="TEMPO", text=[c["tempo"].strip()]))
     if "gain" in c:
         for frame in list(tags.getall("TXXX")):
             if frame.desc.upper() in ("REPLAYGAIN_TRACK_GAIN", "REPLAYGAIN_TRACK_PEAK"):
@@ -386,7 +412,10 @@ def _write_mp3(path: str, c: dict) -> None:
         tags.delall("COMM")
         if c["comment"]:
             tags.add(COMM(encoding=1, lang="eng", desc="", text=[c["comment"]]))
-    tags.save(path, v2_version=3)
+    # mutagen keeps tags as v2.4 in memory; convert v2.4-only frames (e.g. the year, TDRC -> TYER)
+    # or the v2.3 file would contain frames that v2.3 readers don't know.
+    tags.update_to_v23()
+    tags.save(path, v2_version=3, v23_sep="; ")
 
 
 def _write_flac(path: str, c: dict) -> None:
@@ -404,7 +433,7 @@ def _write_flac(path: str, c: dict) -> None:
 
     simple = {"title": "title", "artist": "artist", "album_artist": "albumartist", "album": "album",
               "year": "date", "track": "tracknumber", "track_total": "tracktotal",
-              "disc": "discnumber", "disc_total": "disctotal"}
+              "disc": "discnumber", "disc_total": "disctotal", "language": "language", "tempo": "tempo"}
     aliases = {"albumartist": ("album artist", "album_artist"), "tracktotal": ("totaltracks",),
                "disctotal": ("totaldiscs",), "date": ("year",)}
     for key, vorbis in simple.items():

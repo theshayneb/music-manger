@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.1.1
+
+- Fixed: the year was saved in an ID3v2.4-style frame (TDRC) inside ID3v2.3 tags, which some players don't
+  read. It's now saved as TYER, like MusicBee does. Saving a song's tags again fixes songs saved with 0.1.0.
+- **Language** and **Tempo** (MusicBee's TEMPO field) in the Tags panel, and as columns you can show.
+- Track numbers are saved with a leading zero (`03/11`), matching the existing library.
+
 ## 0.1.0
 
 - **Review** (Downloads) and **Library** (Music) views, chosen on first start.

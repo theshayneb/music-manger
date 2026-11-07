@@ -17,6 +17,8 @@ COLUMNS: list[tuple[str, str]] = [
     ("album_artist", "Album Artist"),
     ("year", "Year"),
     ("genre", "Genre"),
+    ("language", "Language"),
+    ("tempo", "Tempo"),
     ("track", "#"),
     ("length", "Time"),
     ("bitrate", "Bitrate"),
@@ -27,7 +29,7 @@ COLUMNS: list[tuple[str, str]] = [
     ("name", "File name"),
 ]
 COLUMN_KEYS = [key for key, _ in COLUMNS]
-HIDDEN_BY_DEFAULT = {"album_artist", "genre", "track"}
+HIDDEN_BY_DEFAULT = {"album_artist", "genre", "track", "language", "tempo"}
 
 SORT_ROLE = Qt.ItemDataRole.UserRole + 1
 

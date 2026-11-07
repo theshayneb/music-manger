@@ -103,11 +103,12 @@ class TagEditor(QWidget):
         form = QFormLayout()
         form.setFieldGrowthPolicy(QFormLayout.FieldGrowthPolicy.AllNonFixedFieldsGrow)
         self.edits: dict[str, QLineEdit] = {}
-        for key in ("title", "artist", "album_artist", "album", "year", "genre"):
+        for key in ("title", "artist", "album_artist", "album", "year", "genre", "language", "tempo"):
             edit = QLineEdit()
             self.edits[key] = edit
             form.addRow(tags.FIELD_LABELS[key], edit)
         self.edits["genre"].setToolTip("Several genres: separate them with ;")
+        self.edits["tempo"].setToolTip("MusicBee's Tempo field (e.g. Slow, Medium, Fast)")
         nums = QGridLayout()
         for _col, key in enumerate(("track", "track_total", "disc", "disc_total")):
             edit = QLineEdit()

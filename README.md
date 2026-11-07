@@ -44,7 +44,7 @@ Everything is written so that Plex (with **Prefer local metadata** on), Plexamp 
 
 | What | Where |
 |---|---|
-| Title, Artist, Album Artist, Album, Year, Genre, Track #, Disc # | ID3v2.3 tags (MP3) / Vorbis comments (FLAC). Several genres: `Rock; Pop` |
+| Title, Artist, Album Artist, Album, Year, Genre, Track #, Disc #, Language, Tempo | ID3v2.3 tags (MP3), the same frames MusicBee writes (`TYER`, `TRCK` as `03/11`, `TLAN`, `TXXX:TEMPO`) / Vorbis comments (FLAC). Several genres: `Rock; Pop` |
 | Album art | Embedded in the file only (no `cover.jpg`) |
 | Lyrics | In the file (ID3 `USLT`) **and** as `<song name>.txt` next to it, because Plex only reads the `.txt`. The `.txt` follows the song when it's renamed, moved or deleted |
 | Rating | In the file (ID3 `POPM`, the way Windows Media Player, MusicBee and Mp3tag write it). Plex doesn't read it; other players do |

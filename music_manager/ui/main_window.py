@@ -53,6 +53,7 @@ SHOW_FILTERS = [
     ("low", "Low bitrate (under 192 kbps)"),
 ]
 SCAN_CHUNK = 150
+COLUMNS_STATE_KEY = "table2"  # changed when columns are added, so the saved layout isn't misapplied
 
 
 class MainWindow(QMainWindow):
@@ -241,7 +242,7 @@ class MainWindow(QMainWindow):
         if self.settings.window_state:
             self.restoreState(QByteArray.fromBase64(self.settings.window_state.encode()))
         header = self.table.horizontalHeader()
-        state = self.settings.column_state.get("table")
+        state = self.settings.column_state.get(COLUMNS_STATE_KEY)
         if state:
             header.restoreState(QByteArray.fromBase64(state.encode()))
         else:
@@ -811,7 +812,8 @@ class MainWindow(QMainWindow):
         self.settings.volume = self.player.volume.value()
         self.settings.window_geometry = bytes(self.saveGeometry().toBase64()).decode()
         self.settings.window_state = bytes(self.saveState().toBase64()).decode()
-        self.settings.column_state["table"] = bytes(self.table.horizontalHeader().saveState().toBase64()).decode()
+        header_state = self.table.horizontalHeader().saveState().toBase64()
+        self.settings.column_state[COLUMNS_STATE_KEY] = bytes(header_state).decode()
         try:
             self.settings.save()
         except OSError:
