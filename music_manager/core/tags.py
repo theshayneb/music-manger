@@ -51,7 +51,7 @@ WRITABLE = {".mp3", ".flac"}
 # Text fields shown and edited in the app.
 TEXT_FIELDS = ["title", "artist", "album_artist", "album", "year", "genre",
                "track", "track_total", "disc", "disc_total", "edition", "language", "tempo",
-               "original_artist", "original_album", "original_year", "obsidian_tags"]
+               "original_artist", "original_album", "original_year", "obsidian_tags", "album_type"]
 
 FIELD_LABELS = {
     "title": "Title", "artist": "Artist", "album_artist": "Album Artist", "album": "Album",
@@ -59,7 +59,7 @@ FIELD_LABELS = {
     "disc": "Disc #", "disc_total": "of", "lyrics": "Lyrics", "rating": "Rating",
     "language": "Language", "tempo": "Tempo", "edition": "Edition",
     "original_artist": "Original Artist", "original_album": "Original Album", "original_year": "Original Year",
-    "obsidian_tags": "Obsidian tags",
+    "obsidian_tags": "Obsidian tags", "album_type": "Album Type",
 }
 
 POPM_EMAIL = "Windows Media Player 9 Series"
@@ -111,6 +111,7 @@ class Track:
     original_artist: str = ""  # ID3 TOPE
     original_album: str = ""   # ID3 TOAL
     original_year: str = ""    # ID3 TORY (v2.4 TDOR)
+    album_type: str = ""       # "album;live": TXXX:MusicBrainz Album Type and TXXX:RELEASETYPE (kept the same)
     obsidian_tags: str = ""    # "feminism; holiday": TXXX:Obsidian Tags, one value each, for the Obsidian vault
     tempo: str = ""         # MusicBee's Tempo (ID3 TXXX:TEMPO), e.g. "Fast"
     rating: int = 0
@@ -355,6 +356,8 @@ def _read_mp3(d: Details) -> None:
             t.tempo = _first(frame.text)
         elif desc == "TSST" and not t.edition:
             t.edition = _first(frame.text)
+        elif desc.casefold() in ALBUM_TYPE_TAGS:
+            t.album_type = t.album_type or ";".join(str(x).strip() for x in frame.text if str(x).strip())
         elif desc.casefold() == OBSIDIAN_TAGS.casefold():
             t.obsidian_tags = "; ".join(clean_tag(str(x)) for x in frame.text if clean_tag(str(x)))
         elif desc not in KNOWN_TXXX and desc.lower().replace("_", "").replace(" ", "") not in PLAY_COUNT_NAMES:
@@ -387,6 +390,10 @@ KNOWN_TXXX = {"REPLAYGAIN_TRACK_GAIN", "REPLAYGAIN_TRACK_PEAK", "TEMPO", "TSST",
 # The tag Media Manager can read into a note's tags (its music library: source "a tag in the file",
 # name "Obsidian Tags"). One value per tag, without the "#".
 OBSIDIAN_TAGS = "Obsidian Tags"
+ALBUM_TYPE_TAGS = {"musicbrainz album type", "releasetype"}
+ALBUM_TYPES = ["album", "single", "ep", "compilation", "soundtrack", "live", "remix", "album;live",
+               "album;compilation", "album;soundtrack", "album;remix", "ep;live", "single;live", "broadcast",
+               "spokenword", "interview", "audiobook", "dj-mix", "mixtape/street", "demo", "other"]
 
 
 def clean_tag(value: str) -> str:
@@ -457,7 +464,8 @@ MANAGED_ID3 = {"TIT2", "TPE1", "TPE2", "TALB", "TCON", "TDRC", "TYER", "TRCK", "
 MANAGED_VORBIS = {"title", "artist", "albumartist", "album artist", "album_artist", "album", "date", "year", "genre",
                   "tracknumber", "tracktotal", "totaltracks", "discnumber", "disctotal", "totaldiscs", "language",
                   "tempo", "discsubtitle", "edition", "rating", "lyrics", "unsyncedlyrics",
-                  "originalartist", "originalalbum", "originalyear", "originaldate", "obsidian tags"}
+                  "originalartist", "originalalbum", "originalyear", "originaldate", "obsidian tags",
+                  "releasetype", "musicbrainz_albumtype"}
 
 
 def _frame_text(frame) -> str:  # type: ignore[no-untyped-def]
@@ -487,7 +495,8 @@ def _other_id3(tags, t: Track) -> list[tuple[str, str, str]]:  # type: ignore[no
         if fid in MANAGED_ID3 or fid in ("APIC", "USLT"):
             continue
         desc = getattr(frame, "desc", "") or ""
-        if fid == "TXXX" and (desc.upper() in ("TSST", "TEMPO") or desc.casefold() == OBSIDIAN_TAGS.casefold()):
+        if fid == "TXXX" and (desc.upper() in ("TSST", "TEMPO") or desc.casefold() == OBSIDIAN_TAGS.casefold()
+                              or desc.casefold() in ALBUM_TYPE_TAGS):
             continue
         if fid == "COMM" and (desc.lower() == "songs-db_tempo" or (t.edition_field and desc == t.edition_field)):
             continue
@@ -520,6 +529,7 @@ def _read_flac(d: Details) -> None:
     t.language = _vorbis(tags, "language")
     t.original_artist = "; ".join(tags.get("originalartist", [])) if tags else ""
     t.original_album = _vorbis(tags, "originalalbum")
+    t.album_type = _vorbis(tags, "releasetype", "musicbrainz_albumtype")
     t.original_year = (_vorbis(tags, "originalyear") or _vorbis(tags, "originaldate"))[:4]
     t.obsidian_tags = "; ".join(clean_tag(x) for x in (tags.get(OBSIDIAN_TAGS.lower(), []) if tags else []))
     t.tempo = _vorbis(tags, "tempo")
@@ -660,6 +670,14 @@ def _write_mp3(path: str, c: dict) -> None:
         tags.delall("TORY")
         if c["original_year"].strip():
             tags.add(TDOR(encoding=1, text=[c["original_year"].strip()]))  # saved as TORY in ID3v2.3
+    if "album_type" in c:
+        # The same value under both names that players and taggers use.
+        for frame in [f for f in tags.getall("TXXX") if f.desc.casefold() in ALBUM_TYPE_TAGS]:
+            tags.delall(frame.HashKey)
+        value = ";".join(p.strip() for p in re.split(r"[;/,]", c["album_type"]) if p.strip())
+        if value:
+            for desc in ("MusicBrainz Album Type", "RELEASETYPE"):
+                tags.add(TXXX(encoding=1, desc=desc, text=[value]))
     if "obsidian_tags" in c:
         for frame in [f for f in tags.getall("TXXX") if f.desc.casefold() == OBSIDIAN_TAGS.casefold()]:
             tags.delall(frame.HashKey)
@@ -758,6 +776,11 @@ def _write_flac(path: str, c: dict) -> None:
         names = [n.strip() for n in c["original_artist"].split(";") if n.strip()]
         if names:
             tags["originalartist"] = names
+    if "album_type" in c:
+        value = ";".join(p.strip() for p in re.split(r"[;/,]", c["album_type"]) if p.strip())
+        put("releasetype", value, "musicbrainz_albumtype")
+        if value:
+            tags["musicbrainz_albumtype"] = [value]
     if "obsidian_tags" in c:
         put(OBSIDIAN_TAGS.lower(), "")
         values = split_tags(c["obsidian_tags"])

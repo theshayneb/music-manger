@@ -217,3 +217,26 @@ def test_original_fields_and_obsidian_tags(song):
     assert utf16[0] + b"\x00\x00\xff\xfe" + utf16[1] in raw  # value, null, (byte-order mark) next value
     d = tags.read(path, with_details=True)
     assert [name for _k, name, _v in d.frames] == ["Encoder settings"]  # the rest have their own boxes
+
+
+def test_album_type_is_one_field_for_both_tags(song):
+    from mutagen.id3 import TXXX
+
+    path = str(song("t.mp3"))
+    id3 = ID3()
+    id3.add(TXXX(encoding=1, desc="MusicBrainz Album Type", text=["album;live"]))
+    id3.add(TXXX(encoding=1, desc="RELEASETYPE", text=["album;live"]))
+    id3.save(path, v2_version=3)
+    d = tags.read(path, with_details=True)
+    assert d.track.album_type == "album;live" and not d.frames
+    tags.write(path, {"album_type": "album"})
+    raw = ID3(path, translate=False)
+    assert str(raw["TXXX:MusicBrainz Album Type"]) == "album" and str(raw["TXXX:RELEASETYPE"]) == "album"
+
+
+def test_new_lyrics_replace_an_existing_txt(song):
+    path = song("Artist - Song.mp3")
+    path.with_suffix(".txt").write_text("old words", encoding="utf-16")
+    tags.write(str(path), {"lyrics": "new words"})
+    assert path.with_suffix(".txt").read_bytes() == b"new words\r\n"
+    assert tags.read(str(path), with_details=True).lyrics == "new words"

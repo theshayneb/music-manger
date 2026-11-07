@@ -22,6 +22,7 @@ from PySide6.QtWidgets import (
     QSizePolicy,
     QTableWidget,
     QTableWidgetItem,
+    QTabWidget,
     QToolButton,
     QVBoxLayout,
     QWidget,
@@ -80,6 +81,7 @@ class ComboField(QComboBox):
         self.setEditable(True)
         self.setInsertPolicy(QComboBox.InsertPolicy.NoInsert)
         self.setMaxVisibleItems(20)
+        self.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
         self.setSizeAdjustPolicy(QComboBox.SizeAdjustPolicy.AdjustToMinimumContentsLengthWithIcon)
         self.lineEdit().textEdited.connect(self.textEdited)
         self.lineEdit().returnPressed.connect(self.returnPressed)
@@ -87,6 +89,13 @@ class ComboField(QComboBox):
         completer = self.completer()
         completer.setCaseSensitivity(Qt.CaseSensitivity.CaseInsensitive)
         completer.setFilterMode(Qt.MatchFlag.MatchContains)
+
+    def wheelEvent(self, event) -> None:  # type: ignore[no-untyped-def]  # noqa: N802
+        # Scrolling over the Tags panel scrolls the panel, not the value (unless you're in this box).
+        if self.hasFocus() and self.view().isVisible():
+            super().wheelEvent(event)
+        else:
+            event.ignore()
 
     def setText(self, text: str) -> None:  # noqa: N802 - QLineEdit's name
         self.setEditText(text)
@@ -133,7 +142,7 @@ class TagsField(ComboField):
         self.setEditText(" ".join(f"#{t}" for t in tags.split_tags(text)))
 
 
-CHOICE_FIELDS = ("genre", "language", "tempo", "obsidian_tags")
+CHOICE_FIELDS = ("genre", "language", "tempo", "obsidian_tags", "album_type")
 COVER_MIME = "application/x-music-manager-cover"
 
 
@@ -173,6 +182,7 @@ class TagEditor(QWidget):
         self.cover_info.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.cover_info.setStyleSheet("color: palette(placeholder-text);")
         outer.addWidget(self.cover_info)
+        self.cover_info.hide()
         art = QHBoxLayout()
         self.art_file = QPushButton("From file…")
         self.art_paste = QPushButton("Paste")
@@ -185,14 +195,27 @@ class TagEditor(QWidget):
             art.addWidget(b)
         outer.addLayout(art)
 
-        form = QFormLayout()
-        form.setFieldGrowthPolicy(QFormLayout.FieldGrowthPolicy.AllNonFixedFieldsGrow)
+        # Two tabs, so the panel stays short: the tags every song needs, and the extra ones.
+        self.tag_tabs = QTabWidget()
+        standard, extra = QWidget(), QWidget()
+        form = QFormLayout(standard)
+        more = QFormLayout(extra)
+        for f in (form, more):
+            f.setFieldGrowthPolicy(QFormLayout.FieldGrowthPolicy.AllNonFixedFieldsGrow)
+            f.setContentsMargins(6, 6, 6, 6)
         self.edits: dict[str, QLineEdit] = {}
-        for key in ("title", "artist", "album_artist", "album", "edition", "year", "genre", "language", "tempo",
-                    "original_artist", "original_album", "original_year", "obsidian_tags"):
+
+        def field(key: str):  # type: ignore[no-untyped-def]
             edit = TagsField() if key == "obsidian_tags" else ComboField() if key in CHOICE_FIELDS else QLineEdit()
             self.edits[key] = edit
-            form.addRow(tags.FIELD_LABELS[key], edit)
+            return edit
+
+        for key in ("title", "artist", "album_artist", "album", "year", "genre", "language", "tempo"):
+            form.addRow(tags.FIELD_LABELS[key], field(key))
+        for key in ("album_type", "edition", "original_artist", "original_album", "original_year", "obsidian_tags"):
+            more.addRow(tags.FIELD_LABELS[key], field(key))
+        self.edits["album_type"].setToolTip("e.g. album, single, ep, compilation, live, or album;live. Saved as "
+                                            "both MusicBrainz Album Type and RELEASETYPE, kept the same.")
         self.edits["genre"].setToolTip("Several genres: separate them with ;")
         self.edits["tempo"].setToolTip("MusicBee's Tempo field (e.g. Slow, Medium, Fast)")
         self.edits["original_artist"].setToolTip("Who first recorded it (for a cover). Several: separate with ;")
@@ -219,17 +242,20 @@ class TagEditor(QWidget):
         form.addRow("Track #", nums)
         self.rating = RatingStars()
         form.addRow("Rating", self.rating)
-        outer.addLayout(form)
+        self.tag_tabs.addTab(standard, "Standard tags")
+        self.tag_tabs.addTab(extra, "Extra tags")
+        outer.addWidget(self.tag_tabs)
         lookups = QHBoxLayout()
-        self.lookup_btn = QPushButton("🔎 Look up metadata online")
+        self.lookup_btn = QPushButton("🔎 Look up online")
         self.lookup_btn.setToolTip("Tags, album art and lyrics from iTunes, MusicBrainz, Deezer and more (Ctrl+L)")
         self.lookup_btn.clicked.connect(self.lookup_requested)
-        lookups.addWidget(self.lookup_btn, 1)
+        lookups.addWidget(self.lookup_btn)
         self.find_lyrics_btn = QPushButton("🔎 Find lyrics")
         self.find_lyrics_btn.setToolTip("Look up just the lyrics (Ctrl+Shift+L). With several songs selected, "
                                         "those without lyrics get them")
         self.find_lyrics_btn.clicked.connect(self.lyrics_requested)
         lookups.addWidget(self.find_lyrics_btn)
+        lookups.addStretch(1)
         outer.addLayout(lookups)
         lyrics_label = QLabel("Lyrics")
         lyrics_label.setToolTip("Saved in the file and as a .txt next to it")
@@ -357,7 +383,7 @@ class TagEditor(QWidget):
                 self.cover.setText(f"{covers} of {len(tracks)} have art")
             else:
                 self.cover.setText("No album art" if not data else "Can't show this picture")
-            self.cover_info.setText("")
+            self._cover_note("")
             return
         pix = QPixmap.fromImage(image).scaled(COVER_SIZE, COVER_SIZE, Qt.AspectRatioMode.KeepAspectRatio,
                                                Qt.TransformationMode.SmoothTransformation)
@@ -366,7 +392,12 @@ class TagEditor(QWidget):
         info = "Not saved yet" if new else ""
         if len(tracks) > 1 and not new:
             info = f"{sum(t.has_cover for t in tracks)} of {len(tracks)} songs have art"
-        self.cover_info.setText(info)
+        self._cover_note(info)
+
+    def _cover_note(self, text: str) -> None:
+        """The line under the cover takes no room when it has nothing to say."""
+        self.cover_info.setText(text)
+        self.cover_info.setVisible(bool(text))
 
     # ------------------------------------------------------------ editing
     def _mark(self) -> None:
@@ -445,7 +476,7 @@ class TagEditor(QWidget):
         self.changed["cover"] = None
         self.cover.setPixmap(QPixmap())
         self.cover.setText("Art will be removed")
-        self.cover_info.setText("")
+        self._cover_note("")
         self._mark()
 
     def _art_save(self) -> None:

@@ -39,7 +39,7 @@ from ..core.plex import Plex, by_file
 from ..core.plex import match as plex_match
 from ..core.settings import Settings
 from ..core.tags import Track
-from .albums import AlbumModel, ArtDelegate, thumbnail
+from .albums import AlbumModel, AlbumTable, ArtDelegate, thumbnail
 from .dialogs import PlanDialog, SettingsDialog, ask_text
 from .editor import TagEditor
 from .jump import JumpBar, JumpTable, Typed, find
@@ -160,7 +160,7 @@ class MainWindow(QMainWindow):
         self.album_model = AlbumModel(self.model)
         self.album_model.layout.update(self.settings.album_layout)
         self.album_model.cover_loader = self._load_cover
-        self.albums = JumpTable()
+        self.albums = AlbumTable()
         self.albums.setModel(self.album_model)
         self.albums.setItemDelegate(ArtDelegate(self.album_model, self.albums))
         self.albums.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
@@ -814,6 +814,8 @@ class MainWindow(QMainWindow):
         view.scrollTo(model.index(rows[0], 1 if self.album_mode() else 0))
 
     def _select_first(self) -> None:
+        if self.selected_tracks():
+            return  # you've already picked one
         order = self.order()
         if order:
             self._select_path(order[0].path)
@@ -950,7 +952,8 @@ class MainWindow(QMainWindow):
 
     def _update_choices(self) -> None:
         """Genre, Language and Tempo drop-downs: every value used in either folder (from the tag cache)."""
-        found: dict[str, dict[str, str]] = {"genre": {}, "language": {}, "tempo": {}, "obsidian_tags": {}}
+        found: dict[str, dict[str, str]] = {"genre": {}, "language": {}, "tempo": {}, "obsidian_tags": {},
+                                            "album_type": {t.casefold(): t for t in tags.ALBUM_TYPES}}
         tracks = [t.to_dict() for t in self.model.tracks] + list(self.cache._items.values())
         for item in tracks:
             for key, values in found.items():
@@ -960,7 +963,12 @@ class MainWindow(QMainWindow):
                     part = part.strip()
                     if part:
                         values.setdefault(part.casefold(), part)
-        self.editor.set_choices({k: sorted(v.values(), key=str.casefold) for k, v in found.items()})
+        choices = {k: sorted(v.values(), key=str.casefold) for k, v in found.items()}
+        # Album types: the usual ones in their usual order, then any others the library has.
+        usual = [t for t in tags.ALBUM_TYPES]
+        choices["album_type"] = usual + [v for v in choices["album_type"] if v.casefold() not in
+                                         {u.casefold() for u in usual}]
+        self.editor.set_choices(choices)
 
     def save_tags(self, paths: list[str], changes: dict) -> None:
         if not paths or not changes:
@@ -1027,16 +1035,23 @@ class MainWindow(QMainWindow):
                 self.save_tags([track.path], {"lyrics": dialog.chosen_lyrics})
             self.focus_list()
             return
-        missing = [t for t in tracks if not t.has_lyrics]
-        if not missing:
-            self.flash(f"All {len(tracks)} songs already have lyrics.")
+        without = [t for t in tracks if not t.has_lyrics]
+        box = QMessageBox(QMessageBox.Icon.Question, "Find lyrics",
+                          f"Look up lyrics for these {len(tracks)} songs and save them straight away, in the file "
+                          f"and as the song's .txt?\n\n{len(without)} of them have no lyrics yet. LRCLIB is tried "
+                          "first, then lyrics.ovh and Genius.",
+                          QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.Cancel, self)
+        from PySide6.QtWidgets import QCheckBox
+
+        replace = QCheckBox(f"Also replace the lyrics the other {len(tracks) - len(without)} already have "
+                            "(in the file and their .txt)")
+        replace.setChecked(not without)
+        replace.setEnabled(len(without) < len(tracks))
+        box.setCheckBox(replace)
+        if box.exec() != QMessageBox.StandardButton.Yes:
             return
-        answer = QMessageBox.question(
-            self, "Find lyrics",
-            f"Look up lyrics for the {len(missing)} of these {len(tracks)} songs that have none, and save "
-            "them straight away (in the file and as a .txt)?\n\nLRCLIB is tried first, then lyrics.ovh and "
-            "Genius. Songs with lyrics already are left alone.")
-        if answer != QMessageBox.StandardButton.Yes:
+        missing = tracks if replace.isChecked() else without
+        if not missing:
             return
         state = self._release([t.path for t in missing])
 
@@ -1465,6 +1480,8 @@ class MainWindow(QMainWindow):
         if not self.album_mode():
             return
         selected = self.selected_paths()
+        current_track = self.album_model.track(self.albums.currentIndex().row())
+        current_path = current_track.path if current_track else ""
         scroll = self.albums.verticalScrollBar().value()
         tracks = [self.model.tracks[self.proxy.mapToSource(self.proxy.index(r, 0)).row()]
                   for r in range(self.proxy.rowCount())]
@@ -1479,6 +1496,10 @@ class MainWindow(QMainWindow):
             for r in rows:
                 sel.select(self.album_model.index(r, 1), self.album_model.index(r, self.album_model.columnCount() - 1))
             self.albums.selectionModel().select(sel, QItemSelectionModel.SelectionFlag.ClearAndSelect)
+            current = self.album_model.row_of(current_path) if current_path else -1
+            self.albums.selectionModel().setCurrentIndex(
+                self.album_model.index(current if current >= 0 else rows[0], 1),
+                QItemSelectionModel.SelectionFlag.NoUpdate)
         self.albums.selectionModel().blockSignals(False)
         self.albums.verticalScrollBar().setValue(scroll)
         # Learn which MusicBee custom field holds "Edition", so new editions are written there too.

@@ -13,10 +13,11 @@ from dataclasses import dataclass
 
 from PySide6.QtCore import QAbstractTableModel, QModelIndex, QRect, Qt
 from PySide6.QtGui import QColor, QFont, QPainter, QPixmap
-from PySide6.QtWidgets import QStyledItemDelegate, QStyleOptionViewItem, QTableView
+from PySide6.QtWidgets import QAbstractItemView, QStyledItemDelegate, QStyleOptionViewItem, QTableView
 
 from ..core import albums as grouping
 from ..core.tags import Track
+from .jump import JumpTable
 from .model import COLUMNS, TrackModel, fmt_time
 
 ROW = 24
@@ -198,6 +199,31 @@ class AlbumModel(QAbstractTableModel):
         if role == Qt.ItemDataRole.TextAlignmentRole and key in ("length", "bitrate", "year", "gain", "plays"):
             return int(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
         return None
+
+
+class AlbumTable(JumpTable):
+    """The album view's table: the arrow keys (and Page Up/Down, Home/End) only stop on songs,
+    never on the headings, blank lines or the space beside a cover."""
+
+    def moveCursor(self, action, modifiers):  # type: ignore[no-untyped-def]  # noqa: N802
+        index = super().moveCursor(action, modifiers)
+        model = self.model()
+        if not isinstance(model, AlbumModel) or not index.isValid():
+            return index
+        A = QAbstractItemView.CursorAction
+        step = -1 if action in (A.MoveUp, A.MovePageUp, A.MoveHome, A.MovePrevious, A.MoveLeft) else 1
+        if action == A.MoveHome:
+            step = 1
+        elif action == A.MoveEnd:
+            step = -1
+        row = index.row()
+        while 0 <= row < len(model.rows) and model.rows[row].kind != "track":
+            row += step
+        if not 0 <= row < len(model.rows):  # nothing that way: stay where you are
+            row = self.currentIndex().row()
+            if not 0 <= row < len(model.rows) or model.rows[row].kind != "track":
+                return self.currentIndex()
+        return model.index(row, max(1, index.column()))
 
 
 def paint_stars(p: QPainter, x: int, y: int, value: float, size: int = 14) -> None:

@@ -1,5 +1,21 @@
 # Changelog
 
+## 0.5.1
+
+- The Tags panel has two tabs: **Standard tags** (Title, Artist, Album Artist, Album, Year, Genre, Language,
+  Tempo, Track #, Disc #, Rating) and **Extra tags** (Album Type, Edition, Original Artist, Original Album,
+  Original Year, Obsidian tags).
+- **Album Type** (e.g. album, single, ep, compilation, live, album;live) with a drop-down. It's saved as both
+  `MusicBrainz Album Type` and `RELEASETYPE`, kept the same.
+- Scrolling over the Tags panel scrolls the panel; it no longer changes the value of a drop-down under the mouse.
+- Smaller "Look up online" button, with "Find lyrics" beside it; no gap under the album art.
+- Fixed: after saving from the Tags panel, ↓ went to the top of the album view instead of the next song.
+- Fixed: the arrow keys (and Page Up/Down) in the album view stopped on the empty rows beside a cover and between
+  albums; they now go from song to song.
+- **Find lyrics** for several songs can also **replace the lyrics songs already have** (a tick box in its
+  question; before, songs with lyrics, including just a .txt, were always left alone).
+- A song picked right as a folder opens is no longer swapped for the first song.
+
 ## 0.5.0
 
 - **Keep** first shows **every tag of each song, its album art and its lyrics**, with ⚠ beside anything empty

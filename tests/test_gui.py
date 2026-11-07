@@ -204,3 +204,37 @@ def test_views_remember_where_you_were_and_saved_searches(app, song, tmp_path):
     assert window.search.text() == "" and window.proxy.rowCount() == 3
     assert window.settings.saved_searches[0]["source"] == "library"
     window.close()
+
+
+def test_arrow_keys_in_the_album_view_only_stop_on_songs(app, song, tmp_path):
+    from PySide6.QtCore import QEvent, Qt
+    from PySide6.QtGui import QKeyEvent
+
+    from music_manager.ui.main_window import MainWindow
+
+    for album, title in (("One", "A"), ("Two", "B")):
+        p = song(f"music/X - {title}.mp3", seconds=1)
+        tags.write(str(p), {"title": title, "artist": "X", "album": album, "track": "1"})
+    window = MainWindow(Settings(library_folder=str(tmp_path / "music"), last_view="library"), FFMPEG)
+    window.show()
+    wait(app, window, 5, until=lambda: len(window.album_model.order()) == 2)
+    window._select_path(str(tmp_path / "music" / "X - A.mp3"))
+    window.albums.setFocus()
+    app.sendEvent(window.albums, QKeyEvent(QEvent.Type.KeyPress, Qt.Key.Key_Down, Qt.KeyboardModifier.NoModifier))
+    wait(app, window, 1)
+    assert [t.title for t in window.selected_tracks()] == ["B"]  # straight past the padding and the gap
+
+    # Saving from the Tags panel gives the keyboard back to the list, on the same song: ↓ goes on from there.
+    window._select_path(str(tmp_path / "music" / "X - A.mp3"))
+    wait(app, window, 1, until=lambda: window.editor.edits["title"].text() == "A")
+    window.editor.edits["genre"].setFocus()
+    window.editor.apply_field("genre", "Pop")
+    window.editor.save()
+    wait(app, window, 3, until=lambda: tags.read_track(str(tmp_path / "music" / "X - A.mp3")).genre == "Pop")
+    wait(app, window, 1)
+    assert window.albums.hasFocus() or app.focusWidget() is window.albums or not app.focusWidget()
+    assert window.album_model.track(window.albums.currentIndex().row()).title == "A"
+    app.sendEvent(window.albums, QKeyEvent(QEvent.Type.KeyPress, Qt.Key.Key_Down, Qt.KeyboardModifier.NoModifier))
+    wait(app, window, 1)
+    assert [t.title for t in window.selected_tracks()] == ["B"]
+    window.close()
