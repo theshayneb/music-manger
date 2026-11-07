@@ -11,7 +11,7 @@ from pathlib import Path
 from . import tags
 from .settings import cache_dir
 
-CACHE_VERSION = 6  # 2: language and tempo, 3: edition, 4: real_format, 5: plays, 6: sort artist
+CACHE_VERSION = 7  # ... 6: sort artist, 7: original artist/album/year, Obsidian tags
 
 
 def list_songs(folder: str, subfolders: bool) -> list[str]:

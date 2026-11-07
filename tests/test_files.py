@@ -77,3 +77,20 @@ def test_keep_converts_renames_and_moves_into_library(song, tmp_path):
     assert not os.path.exists(flac) and not sidecar.lyrics_path(flac).exists()
     t = tags.read_track(final)
     assert t.gain and t.title == "Hello"
+
+
+def test_keep_can_replace_a_song_already_in_the_library(song, tmp_path):
+    new = song("dl/new.mp3")
+    library = tmp_path / "Music"
+    old = song("Music/Adele - Hello.mp3", seconds=1)
+    old.with_suffix(".txt").write_text("old lyrics", encoding="utf-8")
+    tags.write(str(new), {"title": "Hello", "artist": "Adele"})
+    settings = Settings(library_folder=str(library), review_folder=str(new.parent), gain_on_keep=False)
+    track = tags.read_track(str(new))
+    [(_t, dest, _n)] = keep.plan([track], settings)
+    assert os.path.basename(dest) == "Adele - Hello_1.mp3"  # not replacing: a new name
+    [(_t, dest, note)] = keep.plan([track], settings, overwrite=True)
+    assert os.path.basename(dest) == "Adele - Hello.mp3" and "replaces" in note
+    keep.keep_one(FFMPEG, track, dest, settings, overwrite=True)
+    assert sorted(os.listdir(library)) == ["Adele - Hello.mp3"]  # the old one and its lyrics are recycled
+    assert tags.read_track(str(library / "Adele - Hello.mp3")).length > 2

@@ -56,6 +56,12 @@ Everything is written so that Plex (with **Prefer local metadata** on), Plexamp 
 Converting re-encodes the audio once from the lossless original. MP3s are never re-encoded: turning a 128 kbps
 MP3 into V0 makes it bigger, not better. Use **Show → Low bitrate** to find songs worth replacing.
 
+## Obsidian tags and Media Manager
+
+Type the song's vault tags in **Obsidian tags** (`#feminism #holiday`). They're saved in the file as the tag
+`Obsidian Tags`, one value per tag. In Media Manager's settings for your music library, add a property whose source
+is **Music: a tag in the file, by name** with the name `Obsidian Tags`; the song notes then get those tags.
+
 ## Settings
 
 Saved in `%APPDATA%\MusicManager\settings.json`. Tags of the Library are cached in

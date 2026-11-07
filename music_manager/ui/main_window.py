@@ -46,10 +46,10 @@ from .jump import JumpBar, JumpTable, Typed, find
 from .lookup import LookupDialog, net
 from .model import COLUMN_KEYS, HIDDEN_BY_DEFAULT, PLEX_PLAYS, TrackFilter, TrackModel
 from .player import PlayerBar
+from .review import KeepReview
 from .theme import apply_theme
 from .workers import Background
 
-VIEWS = {"review": "Review", "library": "Library"}
 SHOW_FILTERS = [
     ("", "All songs"),
     ("tags", "Missing tags (title, artist, album or year)"),
@@ -73,7 +73,9 @@ class MainWindow(QMainWindow):
         self.cover_bg = Background(2)  # album covers for the album view
         self.cache = library.TagCache()
         tags.EDITION_COMM = settings.edition_comm
-        self.view = settings.last_view if settings.last_view in VIEWS else "review"
+        self.view = settings.last_view or "review"
+        self._states: dict[str, dict] = {}  # per view: its songs, selection, scroll position, search
+        self._pending_position: dict = {}
         self._scan_gen = 0
         self._details_gen = 0
         self._busy = False
@@ -103,12 +105,18 @@ class MainWindow(QMainWindow):
     def _build_ui(self) -> None:
         self.views = QListWidget()
         self.views.setMaximumWidth(220)
-        for key, label in VIEWS.items():
-            item = QListWidgetItem(label)
-            item.setData(Qt.ItemDataRole.UserRole, key)
-            self.views.addItem(item)
-        self.views.setStyleSheet("QListWidget { font-size: 15px; } QListWidget::item { padding: 8px; }")
-        self.views.setFixedHeight(self.views.sizeHintForRow(0) * len(VIEWS) + 8)
+        self.views.setStyleSheet("QListWidget { font-size: 15px; } QListWidget::item { padding: 6px 8px; }")
+        self.views.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
+        self.views.customContextMenuRequested.connect(self._views_menu)
+        self._fill_views()
+        self.add_view_btn = QToolButton()
+        self.add_view_btn.setText("＋ Add")
+        self.add_view_btn.setToolTip("Add a folder, or save the current search (e.g. Library songs with no album art)")
+        self.add_view_btn.setPopupMode(QToolButton.ToolButtonPopupMode.InstantPopup)
+        add_menu = QMenu(self)
+        add_menu.addAction("Add a folder…", self.add_folder_view)
+        add_menu.addAction("Save the current search and Show filter…", self.save_search_view)
+        self.add_view_btn.setMenu(add_menu)
         self.view_hint = QLabel("")
         self.view_hint.setWordWrap(True)
         self.view_hint.setStyleSheet("color: palette(placeholder-text); padding: 4px;")
@@ -116,6 +124,7 @@ class MainWindow(QMainWindow):
         lv = QVBoxLayout(left)
         lv.setContentsMargins(0, 0, 0, 0)
         lv.addWidget(self.views)
+        lv.addWidget(self.add_view_btn)
         lv.addWidget(self.view_hint)
         lv.addStretch(1)
         left.setMaximumWidth(220)
@@ -223,7 +232,8 @@ class MainWindow(QMainWindow):
             view.selectionModel().selectionChanged.connect(lambda *_, view=view: self._selection_changed(view))
             view.customContextMenuRequested.connect(lambda pos, view=view: self._context_menu(pos, view))
         self.albums.clicked.connect(self._album_clicked)
-        self.editor.save_requested.connect(self.save_tags)
+        # After saving from the Tags panel the song list has the keyboard again (↓ for the next song).
+        self.editor.save_requested.connect(lambda paths, changes: (self.save_tags(paths, changes), self.focus_list()))
         self.editor.rating_requested.connect(self.set_rating)
         self.editor.lookup_requested.connect(self.lookup_selected)
         self.editor.repair_requested.connect(self.repair_selected)
@@ -383,7 +393,7 @@ class MainWindow(QMainWindow):
             self._folders_left.setMaximumWidth(16777215)
             self._folders_left.layout().setDirection(QVBoxLayout.Direction.LeftToRight)
         else:
-            self.views.setFixedHeight(self.views.sizeHintForRow(0) * len(VIEWS) + 8)
+            self.views.setFixedHeight(min(10, self.views.count()) * max(28, self.views.sizeHintForRow(0)) + 8)
             self.views.setMaximumWidth(220)
             self.view_hint.show()
             self._folders_left.setMaximumWidth(220)
@@ -450,16 +460,196 @@ class MainWindow(QMainWindow):
         self._restore_album_columns()
         if not self.settings.review_folder and not self.settings.library_folder:
             self.open_settings(first_run=True)
-        for row in range(self.views.count()):
-            if self.views.item(row).data(Qt.ItemDataRole.UserRole) == self.view:
-                self.views.setCurrentRow(row)
+        if self.view_def(self.view) is None:
+            self.view = "review"
+        self._select_view_item(self.view)
         if not self.ffmpeg:
             self.flash("ffmpeg wasn't found: converting to MP3 and measuring volume won't work.")
 
     # ================================================================ views & loading
+    def view_defs(self) -> list[dict]:
+        """Review, Library, your own folders, then your saved searches."""
+        out = [{"key": "review", "label": "Review", "kind": "review"},
+               {"key": "library", "label": "Library", "kind": "library"}]
+        for f in self.settings.extra_folders:
+            out.append({"key": "folder:" + f["path"], "label": f.get("label") or os.path.basename(f["path"]),
+                        "kind": "folder", "path": f["path"], "subfolders": f.get("subfolders", True)})
+        for q in self.settings.saved_searches:
+            out.append({"key": "search:" + q["label"], "label": "🔍 " + q["label"], "kind": "search", **q})
+        return out
+
+    def view_def(self, key: str | None = None) -> dict | None:
+        key = key or self.view
+        return next((d for d in self.view_defs() if d["key"] == key), None)
+
     def folder(self, view: str | None = None) -> str:
-        view = view or self.view
-        return self.settings.review_folder if view == "review" else self.settings.library_folder
+        d = self.view_def(view) or {"kind": "review"}
+        if d["kind"] == "search":
+            return self.folder(d.get("source", "library"))
+        if d["kind"] == "folder":
+            return d["path"]
+        return self.settings.review_folder if d["kind"] == "review" else self.settings.library_folder
+
+    def subfolders(self, view: str | None = None) -> bool:
+        d = self.view_def(view) or {"kind": "review"}
+        if d["kind"] == "search":
+            return self.subfolders(d.get("source", "library"))
+        if d["kind"] == "folder":
+            return bool(d.get("subfolders", True))
+        return self.settings.review_subfolders if d["kind"] == "review" else self.settings.library_subfolders
+
+    def can_keep(self, view: str | None = None) -> bool:
+        """Keep moves songs into the Library, so it's for every folder but the Library itself."""
+        folder = self.folder(view)
+        return bool(folder) and not fileops.same_path(folder, self.settings.library_folder or "\0")
+
+    def _fill_views(self) -> None:
+        self.views.blockSignals(True)
+        self.views.clear()
+        for d in self.view_defs():
+            item = QListWidgetItem(d["label"])
+            item.setData(Qt.ItemDataRole.UserRole, d["key"])
+            if d["kind"] == "search":
+                where = self.view_def(d.get("source", "library"))
+                item.setToolTip(f"In {where['label'] if where else d.get('source')}: "
+                                f"“{d.get('search', '')}” {dict(SHOW_FILTERS).get(d.get('missing', ''), '')}")
+            elif d["kind"] == "folder":
+                item.setToolTip(d["path"])
+            self.views.addItem(item)
+        self.views.blockSignals(False)
+        self.views.setFixedHeight(min(10, self.views.count()) * max(28, self.views.sizeHintForRow(0)) + 8)
+
+    def _select_view_item(self, key: str) -> None:
+        for row in range(self.views.count()):
+            if self.views.item(row).data(Qt.ItemDataRole.UserRole) == key:
+                self.views.setCurrentRow(row)
+                return
+
+    def add_folder_view(self) -> None:
+        from PySide6.QtWidgets import QFileDialog
+
+        folder = QFileDialog.getExistingDirectory(self, "Add a folder to the Folders panel")
+        if not folder:
+            return
+        folder = os.path.normpath(folder)
+        if any(fileops.same_path(folder, f["path"]) for f in self.settings.extra_folders):
+            self._select_view_item("folder:" + folder)
+            return
+        label = ask_text(self, "Add a folder", "Name in the Folders panel:", os.path.basename(folder) or folder)
+        if label is None:
+            return
+        self.settings.extra_folders.append({"path": folder, "label": label.strip() or os.path.basename(folder),
+                                            "subfolders": True})
+        self.settings.save()
+        self._fill_views()
+        self._select_view_item("folder:" + folder)
+
+    def save_search_view(self) -> None:
+        text, missing = self.search.text().strip(), self.show_filter.currentData()
+        if not text and not missing:
+            QMessageBox.information(self, "Save search", "Type something in the search box, or choose a Show "
+                                    "filter (e.g. No album art), then save it here.")
+            return
+        d = self.view_def() or {"key": "library", "kind": "library"}
+        source = d.get("source", d["key"]) if d["kind"] == "search" else d["key"]
+        default = text or dict(SHOW_FILTERS).get(missing, "Search")
+        label = ask_text(self, "Save search", "Name in the Folders panel:", default)
+        if not label or not label.strip():
+            return
+        label = label.strip()
+        self.settings.saved_searches = [q for q in self.settings.saved_searches if q["label"] != label]
+        self.settings.saved_searches.append({"label": label, "source": source, "search": text, "missing": missing})
+        self.settings.save()
+        # The search now lives in its own entry: the view it came from goes back to showing everything.
+        self.search.clear()
+        self.show_filter.setCurrentIndex(0)
+        self._fill_views()
+        self._select_view_item("search:" + label)
+
+    def _views_menu(self, pos) -> None:  # type: ignore[no-untyped-def]
+        item = self.views.itemAt(pos)
+        d = self.view_def(item.data(Qt.ItemDataRole.UserRole)) if item else None
+        menu = QMenu(self)
+        if d and d["kind"] in ("folder", "search"):
+            menu.addAction("Rename…", lambda: self._rename_view(d))
+            if d["kind"] == "folder":
+                sub = menu.addAction("Include subfolders")
+                sub.setCheckable(True)
+                sub.setChecked(bool(d.get("subfolders", True)))
+                sub.toggled.connect(lambda on: self._set_folder_subfolders(d, on))
+            menu.addAction("Remove from the Folders panel", lambda: self._remove_view(d))
+            menu.addSeparator()
+        menu.addAction("Add a folder…", self.add_folder_view)
+        menu.addAction("Save the current search and Show filter…", self.save_search_view)
+        menu.exec(self.views.mapToGlobal(pos))
+
+    def _rename_view(self, d: dict) -> None:
+        old = d["label"]
+        label = ask_text(self, "Rename", "Name in the Folders panel:", old)
+        if not label or not label.strip() or label.strip() == old:
+            return
+        if d["kind"] == "folder":
+            for f in self.settings.extra_folders:
+                if f["path"] == d["path"]:
+                    f["label"] = label.strip()
+        else:
+            for q in self.settings.saved_searches:
+                if q["label"] == old:
+                    q["label"] = label.strip()
+            if self.view == d["key"]:
+                self.view = "search:" + label.strip()
+        self.settings.save()
+        self._fill_views()
+        self._select_view_item(self.view)
+
+    def _set_folder_subfolders(self, d: dict, on: bool) -> None:
+        for f in self.settings.extra_folders:
+            if f["path"] == d["path"]:
+                f["subfolders"] = on
+        self.settings.save()
+        self._stale.add(d["key"])
+        if self.view == d["key"]:
+            self.reload()
+
+    def _remove_view(self, d: dict) -> None:
+        if d["kind"] == "folder":
+            self.settings.extra_folders = [f for f in self.settings.extra_folders if f["path"] != d["path"]]
+        else:
+            self.settings.saved_searches = [q for q in self.settings.saved_searches if q["label"] != d["label"]]
+        self.settings.save()
+        self._states.pop(d["key"], None)
+        was_current = self.view == d["key"]
+        self._fill_views()
+        if was_current:
+            self.view = "library"
+            self._select_view_item("library")
+            self.reload()
+        else:
+            self._select_view_item(self.view)
+
+    # ---------------------------------------------------------------- remembering where you were
+    def _save_state(self) -> None:
+        self._states[self.view] = {
+            "tracks": list(self.model.tracks),
+            "selected": self.selected_paths(),
+            "scroll_list": self.table.verticalScrollBar().value(),
+            "scroll_albums": self.albums.verticalScrollBar().value(),
+            "search": self.search.text(),
+            "missing": self.show_filter.currentData(),
+        }
+
+    def _restore_position(self, state: dict) -> None:
+        if not state:
+            return
+        rows = [r for r in (self._row_of(p) for p in state.get("selected", [])) if r >= 0]
+        if rows:
+            self._select_rows(rows)
+        bar = self.albums.verticalScrollBar() if self.album_mode() else self.table.verticalScrollBar()
+        bar.setValue(state.get("scroll_albums" if self.album_mode() else "scroll_list", 0))
+
+    def _mark_others_stale(self) -> None:
+        """Files changed: the other views' remembered songs need reading again when shown."""
+        self._stale.update(k for k in self._states if k != self.view)
 
     def _view_clicked(self, item: QListWidgetItem | None, _old=None) -> None:  # type: ignore[no-untyped-def]
         if item is None:
@@ -469,29 +659,46 @@ class MainWindow(QMainWindow):
             return
         if not self._confirm_unsaved():
             return
+        if self.model.tracks or self.view in self._states:
+            self._save_state()
         self.view = key
         self.settings.last_view = key
-        self.reload()
+        self.reload(use_remembered=True)
 
-    def reload(self) -> None:
+    def reload(self, use_remembered: bool = False) -> None:
+        state = self._states.get(self.view, {})
+        fresh = use_remembered and state.get("tracks") is not None and self.view not in self._stale
         self._stale.discard(self.view)
+        d = self.view_def() or {"kind": "review"}
+        # The search and Show filter belong to the view: a saved search brings its own.
+        if use_remembered or d["kind"] == "search":
+            text = state.get("search", d.get("search", "")) if state else d.get("search", "")
+            missing = state.get("missing", d.get("missing", "")) if state else d.get("missing", "")
+            self.search.setText(text)
+            self.show_filter.setCurrentIndex(max(0, self.show_filter.findData(missing)))
         self._apply_mode()
         folder = self.folder()
-        is_review = self.view == "review"
-        self.keep_action.setEnabled(is_review)
+        self.keep_action.setEnabled(self.can_keep())
         self.view_hint.setText(folder or "No folder chosen yet: open ⚙ Settings.")
         self.view_hint.setToolTip(folder)
-        self.model.set_tracks([])
-        self.editor.show_tracks([], None)
         self._scan_gen += 1
         gen = self._scan_gen
+        self._pending_position = state if use_remembered else {}
+        if fresh:  # back to a view seen before: just as it was, no reading
+            self.model.set_tracks(state["tracks"])
+            self._rebuild_albums()
+            QTimer.singleShot(0, lambda: self._restore_position(state))
+            self.status.setText("")
+            return
+        self.model.set_tracks([])
+        self.editor.show_tracks([], None)
         if not folder:
             self.status.setText("")
             return
         if not os.path.isdir(folder):
             self.status.setText(f"Can't open {folder} (is the drive connected?)")
             return
-        subfolders = self.settings.review_subfolders if is_review else self.settings.library_subfolders
+        subfolders = self.subfolders()
         self.status.setText(f"Reading {folder}…")
         self.scan_bg.run(lambda: library.list_songs(folder, subfolders),
                          lambda paths, err: self._scan_listed(gen, paths or [], err))
@@ -520,7 +727,8 @@ class MainWindow(QMainWindow):
             self.model.append(tracks or [])
             if first:
                 self._sort_default()
-                QTimer.singleShot(100, self._select_first)
+                if not self._pending_position:
+                    QTimer.singleShot(100, self._select_first)
             end = start + len(chunk)
             if end < len(paths):
                 self.status.setText(f"Reading tags… {end} of {len(paths)}")
@@ -529,6 +737,10 @@ class MainWindow(QMainWindow):
                 self.status.setText("")
                 self.scan_bg.run(self.cache.save)
                 self._update_choices()
+                if self._pending_position:
+                    pending = self._pending_position
+                    self._pending_position = {}
+                    QTimer.singleShot(150, lambda: self._restore_position(pending))
                 if self._plex_tracks is None:
                     self.refresh_plex_plays()
                 else:
@@ -538,7 +750,7 @@ class MainWindow(QMainWindow):
 
     def _sort_default(self) -> None:
         if self.proxy.sortColumn() < 0:
-            col = COLUMN_KEYS.index("artist" if self.view == "library" else "name")
+            col = COLUMN_KEYS.index("artist" if self.view != "review" else "name")
             self.table.sortByColumn(col, Qt.SortOrder.AscendingOrder)
 
     def _update_count(self) -> None:
@@ -738,11 +950,12 @@ class MainWindow(QMainWindow):
 
     def _update_choices(self) -> None:
         """Genre, Language and Tempo drop-downs: every value used in either folder (from the tag cache)."""
-        found: dict[str, dict[str, str]] = {"genre": {}, "language": {}, "tempo": {}}
+        found: dict[str, dict[str, str]] = {"genre": {}, "language": {}, "tempo": {}, "obsidian_tags": {}}
         tracks = [t.to_dict() for t in self.model.tracks] + list(self.cache._items.values())
         for item in tracks:
             for key, values in found.items():
-                parts = str(item.get(key) or "").split(";") if key == "genre" else [str(item.get(key) or "")]
+                many = key in ("genre", "obsidian_tags")
+                parts = str(item.get(key) or "").split(";") if many else [str(item.get(key) or "")]
                 for part in parts:
                     part = part.strip()
                     if part:
@@ -768,6 +981,7 @@ class MainWindow(QMainWindow):
         def done(failures, error) -> None:  # type: ignore[no-untyped-def]
             self._resume(state)
             self._report("Saved tags", len(paths), failures, error)
+            self._mark_others_stale()
             library = self.settings.library_folder
             if library and any(fileops.same_path(os.path.dirname(p), library) or
                                os.path.normcase(p).startswith(os.path.normcase(library) + os.sep) for p in paths):
@@ -796,6 +1010,9 @@ class MainWindow(QMainWindow):
         self.flash(f"{picked} change{'s' if picked != 1 else ''} from the lookup are in the Tags panel: "
                    "check them and click Save." if picked else "Nothing was picked.")
 
+    def focus_list(self) -> None:
+        self.active().setFocus(Qt.FocusReason.OtherFocusReason)
+
     def find_lyrics_selected(self) -> None:
         tracks = [t for t in self.selected_tracks() if tags.can_write(t.path) and not t.error]
         if not tracks or self._busy:
@@ -808,6 +1025,7 @@ class MainWindow(QMainWindow):
             if dialog.exec() == QDialog.DialogCode.Accepted and dialog.chosen_lyrics is not None:
                 self.editor.changed.pop("lyrics", None)
                 self.save_tags([track.path], {"lyrics": dialog.chosen_lyrics})
+            self.focus_list()
             return
         missing = [t for t in tracks if not t.has_lyrics]
         if not missing:
@@ -850,7 +1068,7 @@ class MainWindow(QMainWindow):
 
     # ================================================================ keep / delete
     def keep_selected(self) -> None:
-        if self.view != "review" or self._busy:
+        if not self.can_keep() or self._busy:
             return
         tracks = self.selected_tracks()
         if not tracks:
@@ -864,22 +1082,35 @@ class MainWindow(QMainWindow):
         if any(convert.needs_convert(t.path) for t in tracks) and not self.ffmpeg:
             QMessageBox.warning(self, "Keep", "ffmpeg wasn't found, so FLAC songs can't be converted to MP3.")
             return
+        # First a last look at everything each song has (⚠ for what's empty)...
+        details = [tags.read(t.path, with_details=True) for t in tracks]
+        review = KeepReview(details, self)
+        if review.exec() != QDialog.DialogCode.Accepted:
+            if review.fix:
+                self._select_path(review.fix)
+                self.editor.setFocus()
+            return
+        # ...then the names they'll have, and whether to replace songs already in the Library.
         rename = self.settings.rename_on_keep
         dialog = PlanDialog(
             "Keep", f"These songs will go into your Library ({self.settings.library_folder}):",
-            tracks, self.settings, lambda pattern: keep.plan(tracks, self.settings, pattern), "Keep",
-            pattern=rename, parent=self)
+            tracks, self.settings,
+            lambda pattern, opts: keep.plan(tracks, self.settings, pattern, opts.get("overwrite", False)), "Keep",
+            pattern=rename, parent=self,
+            options=[("overwrite", "Replace songs with the same name in the Library (the old ones go to the "
+                                   "Recycle Bin). Otherwise the new song gets “_1” added.", False)])
         if dialog.exec() != QDialog.DialogCode.Accepted:
             return
         if rename:
             self.settings.rename_pattern = dialog.current_pattern()
+        overwrite = dialog.chosen().get("overwrite", False)
         rows = [(t, dest) for t, dest, _note in dialog.rows if dest]
         playing = self.player.is_playing()
         next_row = self._row_after([t.path for t, _ in rows])
         self._release([t.path for t, _ in rows])
         self._run_each(
             "Keeping", rows,
-            lambda item: keep.keep_one(self.ffmpeg, item[0], item[1], self.settings),
+            lambda item: keep.keep_one(self.ffmpeg, item[0], item[1], self.settings, overwrite),
             lambda results, failures: self._after_keep(results, failures, next_row, playing))
 
     def _after_keep(self, results: list, failures: list, next_row: str | None, playing: bool) -> None:
@@ -889,6 +1120,7 @@ class MainWindow(QMainWindow):
             self.cache.forget(p)
         self.model.remove(kept)
         self._stale.add("library")
+        self._mark_others_stale()
         self._report("Kept", len(kept), failures, None, warnings)
         if kept:
             self.plex_rescan_soon()
@@ -917,6 +1149,7 @@ class MainWindow(QMainWindow):
             for p in gone:
                 self.cache.forget(p)
             self.model.remove(gone)
+            self._mark_others_stale()
             self._report("Deleted", len(gone), failures, error)
             self._after_removal(next_row, playing)
 
@@ -999,6 +1232,7 @@ class MainWindow(QMainWindow):
         def done(result, error) -> None:  # type: ignore[no-untyped-def]
             renamed, failures = result or ({}, [])
             self._report("Renamed", len(renamed), failures, error)
+            self._mark_others_stale()
             if state:
                 self._resume(state, renamed.get(state[0]))
             self._refresh_tracks(renamed)
@@ -1098,7 +1332,7 @@ class MainWindow(QMainWindow):
             return
         menu = QMenu(self)
         menu.addAction("▶ Play", self.play_selected)
-        if self.view == "review":
+        if self.can_keep():
             menu.addAction("✔ Keep (K)", self.keep_selected)
         menu.addAction("🗑 Delete", self.delete_selected)
         menu.addSeparator()
@@ -1161,7 +1395,8 @@ class MainWindow(QMainWindow):
         new = (self.settings.review_folder, self.settings.library_folder,
                self.settings.review_subfolders, self.settings.library_subfolders)
         if new != old and not first_run:
-            self._stale.update(VIEWS)
+            self._stale.update(d["key"] for d in self.view_defs())
+            self._states.clear()
             self.reload()
         self.refresh_plex_plays()
 

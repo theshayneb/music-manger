@@ -60,7 +60,7 @@ def format_name(pattern: str, track: Track) -> tuple[str, str | None]:
 
 
 def plan(tracks: list[Track], pattern: str, folder: str | None = None,
-         ext: str | None = None) -> list[tuple[Track, str | None, str]]:
+         ext: str | None = None, overwrite: bool = False) -> list[tuple[Track, str | None, str]]:
     """For each track: (track, new path or None, note). New names never clash with each
     other or with existing files (_1, _2 ... is added). folder: move there as well.
     ext: the extension the file will have by then (".mp3" for a FLAC that gets converted)."""
@@ -73,8 +73,13 @@ def plan(tracks: list[Track], pattern: str, folder: str | None = None,
             base = src.stem
         target_dir = Path(folder) if folder else src.parent
         target = target_dir / (base + (ext or src.suffix.lower()))
-        dest = unique_path(target, taken, ignore=str(src))
+        replaces = (overwrite and target.exists() and not same_path(target, src)
+                    and os.path.normcase(str(target)) not in taken)
+        dest = target if replaces else unique_path(target, taken, ignore=str(src))
         taken.add(os.path.normcase(str(dest)))
+        if replaces:
+            out.append((track, str(dest), "replaces the song already there (it goes to the Recycle Bin)"))
+            continue
         if same_path(dest, src) and dest.name == src.name:  # a change of case only is still a rename
             out.append((track, None, problem or "already named like this"))
             continue

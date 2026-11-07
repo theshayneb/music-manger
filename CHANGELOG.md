@@ -1,5 +1,26 @@
 # Changelog
 
+## 0.5.0
+
+- **Keep** first shows **every tag of each song, its album art and its lyrics**, with ⚠ beside anything empty
+  (and a count per song). **Looks right: Keep** carries on; **Fix this song first** selects it so you can fix it.
+- **Keep can replace** a song with the same name already in the Library: tick "Replace songs with the same name"
+  in the Keep window (off by default; the old song and its lyrics file go to the Recycle Bin).
+- **Obsidian tags** in the Tags panel (e.g. `#feminism #holiday`; pick from the list to add one). Saved in the
+  file as the tag `Obsidian Tags`, one value per tag, so Media Manager can put them in the song note's tags.
+- **Original Artist, Original Album and Original Year** can be edited (ID3 TOPE, TOAL, TORY).
+- **Copy** album art and **Paste** it into another song (the picture is copied exactly, not re-compressed).
+- **Folders panel**: **＋ Add** your own folders, and **save a search** (the search box plus the Show filter, e.g.
+  "No album art" in the Library) as an entry of its own. Right-click an entry to rename or remove it.
+- Each entry in the Folders panel **remembers where you were** (selection, scroll position, search) when you switch
+  away and back, without reading the folder again.
+- After saving tags or lyrics from the Tags panel (or Find lyrics), the **song list has the keyboard again**, so ↓
+  goes to the next song.
+- Fixed: saving tags while a song played **started it over**; it now carries on from where it was.
+- "Look up metadata online" and "Find lyrics" sit side by side.
+- Several values in one tag (e.g. two genres from MusicBee) are kept as separate values when saving, as MusicBee
+  writes them.
+
 ## 0.4.0
 
 - **Plays from Plex**: with your Plex server's address and token in ⚙ Settings (same as the Media Manager

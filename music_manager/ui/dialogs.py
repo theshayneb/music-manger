@@ -199,8 +199,10 @@ class PlanDialog(QDialog):
     With pattern=True the rename pattern can be changed and the table updates."""
 
     def __init__(self, title: str, intro: str, tracks: list[Track], settings: Settings,
-                 build, ok_text: str, pattern: bool = False, parent: QWidget | None = None):  # type: ignore[no-untyped-def]
+                 build, ok_text: str, pattern: bool = False, parent: QWidget | None = None,  # type: ignore[no-untyped-def]
+                 options: list[tuple[str, str, bool]] | None = None):
         super().__init__(parent)
+        self.options: dict[str, QCheckBox] = {}
         self.setWindowTitle(title)
         self.resize(820, 420)
         self.tracks, self.settings, self.build = tracks, settings, build
@@ -224,6 +226,12 @@ class PlanDialog(QDialog):
             hint.setWordWrap(True)
             hint.setStyleSheet("color: palette(placeholder-text);")
             layout.addWidget(hint)
+        for key, label, default in options or []:
+            box = QCheckBox(label)
+            box.setChecked(default)
+            box.toggled.connect(lambda _on: self.refresh())
+            self.options[key] = box
+            layout.addWidget(box)
         self.table = QTableWidget(0, 3)
         self.table.setHorizontalHeaderLabels(["Song", "Becomes", "Note"])
         self.table.verticalHeader().setVisible(False)
@@ -242,6 +250,9 @@ class PlanDialog(QDialog):
         layout.addWidget(self.buttons)
         self.refresh()
 
+    def chosen(self) -> dict[str, bool]:
+        return {key: box.isChecked() for key, box in self.options.items()}
+
     def current_pattern(self) -> str:
         return self.pattern.currentText().strip() if self.pattern else self.settings.rename_pattern
 
@@ -253,7 +264,7 @@ class PlanDialog(QDialog):
             self.summary.setText("Unknown placeholder: " + ", ".join("{" + b + "}" for b in bad))
             ok.setEnabled(False)
             return
-        self.rows = self.build(pattern)
+        self.rows = self.build(pattern, self.chosen()) if self.options else self.build(pattern)
         self.table.setRowCount(len(self.rows))
         changes = 0
         for r, (track, becomes, note) in enumerate(self.rows):

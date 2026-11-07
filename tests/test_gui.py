@@ -53,6 +53,7 @@ def test_review_edit_and_keep(app, song, tmp_path, monkeypatch):
     assert tags.read_track(str(a)).album == "25"
 
     monkeypatch.setattr(main_window.PlanDialog, "exec", lambda self: (self.accept(), 1)[1])
+    monkeypatch.setattr(main_window.KeepReview, "exec", lambda self: (self.accept(), 1)[1])
     window._select_path(str(a))
     window.keep_selected()
     wait(app, window, 20, until=lambda: os.path.exists(music / "Adele - Hello.mp3") and not window._busy)
@@ -150,4 +151,56 @@ def test_album_view(app, song, tmp_path):
     assert len(window.selected_tracks()) == 3
     window.set_mode("list")
     assert not window.album_mode() and len(window.selected_tracks()) == 3
+    window.close()
+
+
+def test_keep_review_marks_what_is_empty(app, song):
+    from music_manager.ui.review import KeepReview, empties
+
+    path = song("a.mp3")
+    tags.write(str(path), {"title": "Hello", "artist": "Adele"})
+    d = tags.read(str(path), with_details=True)
+    missing = empties(d)
+    assert "Album" in missing and "Album art" in missing and "Lyrics" in missing and "Title" not in missing
+    review = KeepReview([d])
+    review._fix()
+    assert review.fix == str(path)
+
+
+@needs_ffmpeg
+def test_views_remember_where_you_were_and_saved_searches(app, song, tmp_path):
+    from music_manager.ui.main_window import MainWindow
+
+    for i in range(3):
+        p = song(f"music/Artist {i} - Song {i}.mp3", seconds=1)
+        tags.write(str(p), {"title": f"Song {i}", "artist": f"Artist {i}", "album": "A" if i else ""})
+    review = tmp_path / "dl"
+    review.mkdir()
+    settings = Settings(library_folder=str(tmp_path / "music"), review_folder=str(review), last_view="library",
+                        view_modes={"library": "list", "review": "list"})
+    window = MainWindow(settings, FFMPEG)
+    window.show()
+    wait(app, window, 5, until=lambda: len(window.model.tracks) == 3)
+    window._select_path(str(tmp_path / "music" / "Artist 2 - Song 2.mp3"))
+    window._select_view_item("review")
+    wait(app, window, 2)
+    window._select_view_item("library")
+    wait(app, window, 2, until=lambda: bool(window.selected_tracks()))
+    assert [t.title for t in window.selected_tracks()] == ["Song 2"]
+    # A saved search: Library songs matching "Song 1".
+    window.search.setText("Song 1")
+    from music_manager.ui import main_window as mw
+
+    original = mw.ask_text
+    mw.ask_text = lambda *a, **k: "Song one"
+    try:
+        window.save_search_view()
+    finally:
+        mw.ask_text = original
+    wait(app, window, 3, until=lambda: window.view == "search:Song one" and window.proxy.rowCount() == 1)
+    assert window.view == "search:Song one" and window.proxy.rowCount() == 1
+    window._select_view_item("library")  # the Library's own search comes back: none
+    wait(app, window, 2)
+    assert window.search.text() == "" and window.proxy.rowCount() == 3
+    assert window.settings.saved_searches[0]["source"] == "library"
     window.close()

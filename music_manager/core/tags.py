@@ -27,9 +27,12 @@ from mutagen.id3 import (
     POPM,
     TALB,
     TCON,
+    TDOR,
     TDRC,
     TIT2,
     TLAN,
+    TOAL,
+    TOPE,
     TPE1,
     TPE2,
     TPOS,
@@ -47,13 +50,16 @@ WRITABLE = {".mp3", ".flac"}
 
 # Text fields shown and edited in the app.
 TEXT_FIELDS = ["title", "artist", "album_artist", "album", "year", "genre",
-               "track", "track_total", "disc", "disc_total", "edition", "language", "tempo"]
+               "track", "track_total", "disc", "disc_total", "edition", "language", "tempo",
+               "original_artist", "original_album", "original_year", "obsidian_tags"]
 
 FIELD_LABELS = {
     "title": "Title", "artist": "Artist", "album_artist": "Album Artist", "album": "Album",
     "year": "Year", "genre": "Genre", "track": "Track #", "track_total": "of",
     "disc": "Disc #", "disc_total": "of", "lyrics": "Lyrics", "rating": "Rating",
     "language": "Language", "tempo": "Tempo", "edition": "Edition",
+    "original_artist": "Original Artist", "original_album": "Original Album", "original_year": "Original Year",
+    "obsidian_tags": "Obsidian tags",
 }
 
 POPM_EMAIL = "Windows Media Player 9 Series"
@@ -102,6 +108,10 @@ class Track:
     edition: str = ""       # e.g. "Deluxe Edition" (ID3 TXXX:TSST, as MusicBee writes it)
     edition_field: str = "" # the MusicBee custom field that also holds the edition, e.g. "Songs-DB_Custom2"
     language: str = ""      # ID3 TLAN, e.g. "English"
+    original_artist: str = ""  # ID3 TOPE
+    original_album: str = ""   # ID3 TOAL
+    original_year: str = ""    # ID3 TORY (v2.4 TDOR)
+    obsidian_tags: str = ""    # "feminism; holiday": TXXX:Obsidian Tags, one value each, for the Obsidian vault
     tempo: str = ""         # MusicBee's Tempo (ID3 TXXX:TEMPO), e.g. "Fast"
     rating: int = 0
     plays: int = 0          # play count, if a player stored it in the file (never written by this app)
@@ -331,6 +341,10 @@ def _read_mp3(d: Details) -> None:
     uslt = tags.getall("USLT")
     t.lyrics_in_file = any(str(u.text).strip() for u in uslt)
     t.language = _first(tags.get("TLAN"))
+    t.original_artist = "; ".join(str(x) for x in tags["TOPE"].text) if "TOPE" in tags else ""
+    t.original_album = _first(tags.get("TOAL"))
+    original = tags.get("TDOR") or tags.get("TORY")
+    t.original_year = _first(original)[:4] if original else ""
     t.edition = _first(tags.get("TSST"))
     musicbee_tempo = ""
     for frame in tags.getall("TXXX"):
@@ -341,6 +355,8 @@ def _read_mp3(d: Details) -> None:
             t.tempo = _first(frame.text)
         elif desc == "TSST" and not t.edition:
             t.edition = _first(frame.text)
+        elif desc.casefold() == OBSIDIAN_TAGS.casefold():
+            t.obsidian_tags = "; ".join(clean_tag(str(x)) for x in frame.text if clean_tag(str(x)))
         elif desc not in KNOWN_TXXX and desc.lower().replace("_", "").replace(" ", "") not in PLAY_COUNT_NAMES:
             d.extra[frame.desc] = " / ".join(str(x) for x in frame.text)
     for frame in tags.getall("COMM"):
@@ -367,7 +383,27 @@ def _read_mp3(d: Details) -> None:
     d.frames = _other_id3(tags, t)
 
 
-KNOWN_TXXX = {"REPLAYGAIN_TRACK_GAIN", "REPLAYGAIN_TRACK_PEAK", "TEMPO", "TSST"}
+KNOWN_TXXX = {"REPLAYGAIN_TRACK_GAIN", "REPLAYGAIN_TRACK_PEAK", "TEMPO", "TSST", "OBSIDIAN TAGS"}
+# The tag Media Manager can read into a note's tags (its music library: source "a tag in the file",
+# name "Obsidian Tags"). One value per tag, without the "#".
+OBSIDIAN_TAGS = "Obsidian Tags"
+
+
+def clean_tag(value: str) -> str:
+    """"#Feminism " -> "Feminism"; spaces inside become hyphens (Obsidian tags can't have spaces)."""
+    value = value.strip().lstrip("#").strip()
+    return "-".join(value.split())
+
+
+def split_tags(text: str) -> list[str]:
+    """"#feminism, #atheism holiday" or "feminism; atheism" -> ["feminism", "atheism", "holiday"].
+    (Obsidian tags have no spaces, so a space separates tags too.)"""
+    out: list[str] = []
+    for part in re.split(r"[;,\s]+", text or ""):
+        tag = clean_tag(part)
+        if tag and tag.casefold() not in {o.casefold() for o in out}:
+            out.append(tag)
+    return out
 PLAY_COUNT_NAMES = {"playcount", "playcounter", "plays", "fmpsplaycount"}
 
 
@@ -416,10 +452,12 @@ FRAME_NAMES = {
     "TDAT": "Date", "TIME": "Time", "TRDA": "Recording dates", "TSIZ": "Size", "MLLT": "MPEG lookup table",
     "OWNE": "Ownership", "LINK": "Link", "ETCO": "Event timing", "CHAP": "Chapter", "CTOC": "Table of contents",
 }
-MANAGED_ID3 = {"TIT2", "TPE1", "TPE2", "TALB", "TCON", "TDRC", "TYER", "TRCK", "TPOS", "TLAN", "TSST"}
+MANAGED_ID3 = {"TIT2", "TPE1", "TPE2", "TALB", "TCON", "TDRC", "TYER", "TRCK", "TPOS", "TLAN", "TSST",
+               "TOPE", "TOAL", "TORY", "TDOR"}
 MANAGED_VORBIS = {"title", "artist", "albumartist", "album artist", "album_artist", "album", "date", "year", "genre",
                   "tracknumber", "tracktotal", "totaltracks", "discnumber", "disctotal", "totaldiscs", "language",
-                  "tempo", "discsubtitle", "edition", "rating", "lyrics", "unsyncedlyrics"}
+                  "tempo", "discsubtitle", "edition", "rating", "lyrics", "unsyncedlyrics",
+                  "originalartist", "originalalbum", "originalyear", "originaldate", "obsidian tags"}
 
 
 def _frame_text(frame) -> str:  # type: ignore[no-untyped-def]
@@ -449,7 +487,7 @@ def _other_id3(tags, t: Track) -> list[tuple[str, str, str]]:  # type: ignore[no
         if fid in MANAGED_ID3 or fid in ("APIC", "USLT"):
             continue
         desc = getattr(frame, "desc", "") or ""
-        if fid == "TXXX" and desc.upper() in ("TSST", "TEMPO"):
+        if fid == "TXXX" and (desc.upper() in ("TSST", "TEMPO") or desc.casefold() == OBSIDIAN_TAGS.casefold()):
             continue
         if fid == "COMM" and (desc.lower() == "songs-db_tempo" or (t.edition_field and desc == t.edition_field)):
             continue
@@ -480,6 +518,10 @@ def _read_flac(d: Details) -> None:
     tags = audio.tags or {}
     t.title = _vorbis(tags, "title")
     t.language = _vorbis(tags, "language")
+    t.original_artist = "; ".join(tags.get("originalartist", [])) if tags else ""
+    t.original_album = _vorbis(tags, "originalalbum")
+    t.original_year = (_vorbis(tags, "originalyear") or _vorbis(tags, "originaldate"))[:4]
+    t.obsidian_tags = "; ".join(clean_tag(x) for x in (tags.get(OBSIDIAN_TAGS.lower(), []) if tags else []))
     t.tempo = _vorbis(tags, "tempo")
     t.edition = _vorbis(tags, "discsubtitle", "edition")
     t.plays = max((_int(_vorbis(tags, k)) for k in ("playcount", "play_count", "fmps_playcount", "play_counter")),
@@ -606,6 +648,24 @@ def _write_mp3(path: str, c: dict) -> None:
             tags.add(APIC(encoding=1, mime=mime, type=3, desc="", data=data))
     if "language" in c:
         text("TLAN", TLAN, c["language"].strip())
+    if "original_artist" in c:
+        tags.delall("TOPE")
+        names = [n.strip() for n in c["original_artist"].split(";") if n.strip()]
+        if names:
+            tags.add(TOPE(encoding=1, text=names))
+    if "original_album" in c:
+        text("TOAL", TOAL, c["original_album"].strip())
+    if "original_year" in c:
+        tags.delall("TDOR")
+        tags.delall("TORY")
+        if c["original_year"].strip():
+            tags.add(TDOR(encoding=1, text=[c["original_year"].strip()]))  # saved as TORY in ID3v2.3
+    if "obsidian_tags" in c:
+        for frame in [f for f in tags.getall("TXXX") if f.desc.casefold() == OBSIDIAN_TAGS.casefold()]:
+            tags.delall(frame.HashKey)
+        values = split_tags(c["obsidian_tags"])
+        if values:
+            tags.add(TXXX(encoding=1, desc=OBSIDIAN_TAGS, text=values))
     if "tempo" in c:
         # Older MusicBee versions kept Tempo in a comment: change it where it already is.
         value = c["tempo"].strip()
@@ -657,7 +717,7 @@ def _write_mp3(path: str, c: dict) -> None:
         if key in tags:
             del tags[key]
     tags.update_to_v23()
-    tags.save(path, v2_version=3, v23_sep="; ")
+    tags.save(path, v2_version=3, v23_sep=None)  # several values: null-separated, as MusicBee writes them
 
 
 def _write_flac(path: str, c: dict) -> None:
@@ -676,7 +736,7 @@ def _write_flac(path: str, c: dict) -> None:
     simple = {"title": "title", "artist": "artist", "album_artist": "albumartist", "album": "album",
               "year": "date", "track": "tracknumber", "track_total": "tracktotal",
               "disc": "discnumber", "disc_total": "disctotal", "language": "language", "tempo": "tempo",
-              "edition": "discsubtitle"}
+              "edition": "discsubtitle", "original_album": "originalalbum", "original_year": "originalyear"}
     aliases = {"albumartist": ("album artist", "album_artist"), "tracktotal": ("totaltracks",),
                "disctotal": ("totaldiscs",), "date": ("year",)}
     for key, vorbis in simple.items():
@@ -693,6 +753,16 @@ def _write_flac(path: str, c: dict) -> None:
     if "rating" in c:
         stars = max(0, min(5, int(c["rating"])))
         put("rating", str(stars * 20) if stars else "")
+    if "original_artist" in c:
+        put("originalartist", "")
+        names = [n.strip() for n in c["original_artist"].split(";") if n.strip()]
+        if names:
+            tags["originalartist"] = names
+    if "obsidian_tags" in c:
+        put(OBSIDIAN_TAGS.lower(), "")
+        values = split_tags(c["obsidian_tags"])
+        if values:
+            tags[OBSIDIAN_TAGS.lower()] = values
     if "lyrics" in c:
         put("lyrics", (c["lyrics"] or "") if (c["lyrics"] or "").strip() else "", "unsyncedlyrics")
     if "gain" in c:

@@ -29,6 +29,7 @@ class PlayerBar(QWidget):
         super().__init__(parent)
         self.path = ""
         self._seeking = False
+        self._resume_at: tuple[int, bool] | None = None
         self.player = None
         layout = QHBoxLayout(self)
         layout.setContentsMargins(8, 4, 8, 4)
@@ -134,7 +135,17 @@ class PlayerBar(QWidget):
             return
         self.path = path
         self.now_label.setText(title)
+        # The position can only be set once the file has loaded; until then setPosition is
+        # ignored (which made a song start over after its tags were saved).
+        self._resume_at = (position, playing)
         self.player.setSource(QUrl.fromLocalFile(path))
+        if self.player.mediaStatus() in (QMediaPlayer.MediaStatus.LoadedMedia,
+                                         QMediaPlayer.MediaStatus.BufferedMedia):
+            self._apply_resume()
+
+    def _apply_resume(self) -> None:
+        position, playing = self._resume_at or (0, False)
+        self._resume_at = None
         self.player.setPosition(position)
         if playing:
             self.player.play()
@@ -166,5 +177,9 @@ class PlayerBar(QWidget):
         self.play_btn.setText("⏸" if state == QMediaPlayer.PlaybackState.PlayingState else "▶")
 
     def _status(self, status) -> None:  # type: ignore[no-untyped-def]
+        if self._resume_at is not None and status in (QMediaPlayer.MediaStatus.LoadedMedia,
+                                                      QMediaPlayer.MediaStatus.BufferedMedia):
+            self._apply_resume()
+            return
         if status == QMediaPlayer.MediaStatus.EndOfMedia:
             self.finished.emit()

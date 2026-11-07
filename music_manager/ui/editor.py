@@ -106,7 +106,35 @@ class ComboField(QComboBox):
         self.blockSignals(False)
 
 
-CHOICE_FIELDS = ("genre", "language", "tempo")
+class TagsField(ComboField):
+    """Obsidian tags: picking one from the list adds it to those already there."""
+
+    def __init__(self, parent: QWidget | None = None):
+        super().__init__(parent)
+        self.activated.disconnect()
+        self.activated.connect(self._add)
+        self._before = ""
+
+    def showPopup(self) -> None:  # noqa: N802
+        self._before = self.lineEdit().text()
+        super().showPopup()
+
+    def _add(self, index: int) -> None:
+        picked = self.itemText(index)
+        current = tags.split_tags(self._before)
+        if picked.casefold() not in {c.casefold() for c in current}:
+            current.append(picked)
+        text = " ".join(f"#{c}" for c in current)
+        self.setEditText(text)
+        self._before = ""
+        self.textEdited.emit(text)
+
+    def setText(self, text: str) -> None:  # noqa: N802
+        self.setEditText(" ".join(f"#{t}" for t in tags.split_tags(text)))
+
+
+CHOICE_FIELDS = ("genre", "language", "tempo", "obsidian_tags")
+COVER_MIME = "application/x-music-manager-cover"
 
 
 class TagEditor(QWidget):
@@ -150,20 +178,29 @@ class TagEditor(QWidget):
         self.art_paste = QPushButton("Paste")
         self.art_remove = QPushButton("Remove")
         self.art_save = QPushButton("Save as…")
-        self.art_paste.setToolTip("Paste a picture you copied (e.g. Copy image in a web browser)")
-        for b in (self.art_file, self.art_paste, self.art_remove, self.art_save):
+        self.art_copy = QPushButton("Copy")
+        self.art_copy.setToolTip("Copy this album art, to Paste it into another song (the picture is kept exactly)")
+        self.art_paste.setToolTip("Paste a picture: one copied here, or with Copy image in a web browser")
+        for b in (self.art_file, self.art_copy, self.art_paste, self.art_remove, self.art_save):
             art.addWidget(b)
         outer.addLayout(art)
 
         form = QFormLayout()
         form.setFieldGrowthPolicy(QFormLayout.FieldGrowthPolicy.AllNonFixedFieldsGrow)
         self.edits: dict[str, QLineEdit] = {}
-        for key in ("title", "artist", "album_artist", "album", "edition", "year", "genre", "language", "tempo"):
-            edit = ComboField() if key in CHOICE_FIELDS else QLineEdit()
+        for key in ("title", "artist", "album_artist", "album", "edition", "year", "genre", "language", "tempo",
+                    "original_artist", "original_album", "original_year", "obsidian_tags"):
+            edit = TagsField() if key == "obsidian_tags" else ComboField() if key in CHOICE_FIELDS else QLineEdit()
             self.edits[key] = edit
             form.addRow(tags.FIELD_LABELS[key], edit)
         self.edits["genre"].setToolTip("Several genres: separate them with ;")
         self.edits["tempo"].setToolTip("MusicBee's Tempo field (e.g. Slow, Medium, Fast)")
+        self.edits["original_artist"].setToolTip("Who first recorded it (for a cover). Several: separate with ;")
+        self.edits["original_year"].setToolTip("The year it first came out")
+        self.edits["obsidian_tags"].setToolTip(
+            "Tags for the song's note in your Obsidian vault, e.g. #feminism #holiday. Pick from the list to add "
+            "one. Saved as the file's “Obsidian Tags” tag, which Media Manager can read into the note's tags.")
+        self.edits["obsidian_tags"].setPlaceholderText("#feminism #holiday")
         self.edits["edition"].setToolTip("e.g. Deluxe Edition, iTunes Version (saved like MusicBee: TXXX:TSST). "
                                          "Plex and Symfonium don't show it.")
         nums = QGridLayout()
@@ -183,20 +220,20 @@ class TagEditor(QWidget):
         self.rating = RatingStars()
         form.addRow("Rating", self.rating)
         outer.addLayout(form)
-        self.lookup_btn = QPushButton("🔎  Look up tags, art and lyrics online…  (Ctrl+L)")
+        lookups = QHBoxLayout()
+        self.lookup_btn = QPushButton("🔎 Look up metadata online")
+        self.lookup_btn.setToolTip("Tags, album art and lyrics from iTunes, MusicBrainz, Deezer and more (Ctrl+L)")
         self.lookup_btn.clicked.connect(self.lookup_requested)
-        outer.addWidget(self.lookup_btn)
-
-        lyrics_row = QHBoxLayout()
-        lyrics_label = QLabel("Lyrics")
-        lyrics_label.setToolTip("Saved in the file and as a .txt next to it")
-        lyrics_row.addWidget(lyrics_label, 1)
+        lookups.addWidget(self.lookup_btn, 1)
         self.find_lyrics_btn = QPushButton("🔎 Find lyrics")
         self.find_lyrics_btn.setToolTip("Look up just the lyrics (Ctrl+Shift+L). With several songs selected, "
                                         "those without lyrics get them")
         self.find_lyrics_btn.clicked.connect(self.lyrics_requested)
-        lyrics_row.addWidget(self.find_lyrics_btn)
-        outer.addLayout(lyrics_row)
+        lookups.addWidget(self.find_lyrics_btn)
+        outer.addLayout(lookups)
+        lyrics_label = QLabel("Lyrics")
+        lyrics_label.setToolTip("Saved in the file and as a .txt next to it")
+        outer.addWidget(lyrics_label)
         self.lyrics = QPlainTextEdit()
         self.lyrics.setPlaceholderText("Paste lyrics here")
         self.lyrics.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
@@ -236,6 +273,7 @@ class TagEditor(QWidget):
         self.revert_btn.clicked.connect(lambda: self.show_tracks(self.tracks, self._details))
         self.art_file.clicked.connect(self._art_from_file)
         self.art_paste.clicked.connect(self._art_paste)
+        self.art_copy.clicked.connect(self._art_copy)
         self.art_remove.clicked.connect(self._art_remove)
         self.art_save.clicked.connect(self._art_save)
         self._details: Details | None = None
@@ -281,6 +319,7 @@ class TagEditor(QWidget):
         for b in (self.art_file, self.art_paste, self.art_remove):
             b.setEnabled(writable)
         self.art_save.setEnabled(bool(details and details.cover))
+        self.art_copy.setEnabled(bool(details and details.cover))
         self.save_btn.setEnabled(False)
         self.revert_btn.setEnabled(False)
         broken = [t for t in tracks if t.error]
@@ -352,6 +391,7 @@ class TagEditor(QWidget):
         self.changed["cover"] = (data, tags.picture_mime(data))
         self._show_cover(data, self.tracks, new=True)
         self.art_save.setEnabled(True)
+        self.art_copy.setEnabled(True)
         self._mark()
 
     def _art_from_file(self) -> None:
@@ -360,9 +400,28 @@ class TagEditor(QWidget):
             with open(path, "rb") as f:
                 self.set_cover(f.read())
 
+    def _art_copy(self) -> None:
+        data = self.changed["cover"][0] if self.changed.get("cover") else None
+        if data is None and self._details:
+            data = self._details.cover
+        if not data:
+            return
+        from PySide6.QtCore import QMimeData
+
+        mime = QMimeData()
+        mime.setData(COVER_MIME, QByteArray(data))  # the exact picture, for Paste here
+        image = QImage.fromData(QByteArray(data))
+        if not image.isNull():
+            mime.setImageData(image)  # and a plain picture for other apps
+        QGuiApplication.clipboard().setMimeData(mime)
+        self.status.setText("Album art copied: select another song and click Paste")
+
     def _art_paste(self) -> None:
         clip = QGuiApplication.clipboard()
         mime = clip.mimeData()
+        if mime is not None and mime.hasFormat(COVER_MIME):
+            self.set_cover(bytes(mime.data(COVER_MIME)))
+            return
         if mime is not None and mime.hasUrls():
             for url in mime.urls():
                 if url.isLocalFile() and url.toLocalFile().lower().endswith((".jpg", ".jpeg", ".png", ".webp")):

@@ -201,3 +201,19 @@ def test_every_other_tag_is_listed_and_can_be_deleted(song):
     tags.write(path, {"remove": [names["Comment"][0], names["Encoded by"][0]]})
     left = {name for _k, name, _v in tags.read(path, with_details=True).frames}
     assert left == {"MusicBrainz Album Id"} and tags.read_track(path).title == "Keep me"
+
+
+def test_original_fields_and_obsidian_tags(song):
+    path = str(song("x.mp3"))
+    tags.write(path, {"original_artist": "Cyndi Lauper", "original_album": "She's So Unusual", "original_year": "1983",
+                      "obsidian_tags": "#feminism, #holiday atheism", "title": "Girls"})
+    t = tags.read_track(path)
+    assert (t.original_artist, t.original_album, t.original_year) == ("Cyndi Lauper", "She's So Unusual", "1983")
+    assert t.obsidian_tags == "feminism; holiday; atheism"
+    raw = open(path, "rb").read(4096)
+    # ID3v2.3 frames, and the tags as separate (null-separated) values, which Media Manager reads as a list.
+    assert b"TORY" in raw and b"TDOR" not in raw and b"TOPE" in raw and b"TOAL" in raw
+    utf16 = "feminism".encode("utf-16-le"), "holiday".encode("utf-16-le")
+    assert utf16[0] + b"\x00\x00\xff\xfe" + utf16[1] in raw  # value, null, (byte-order mark) next value
+    d = tags.read(path, with_details=True)
+    assert [name for _k, name, _v in d.frames] == ["Encoder settings"]  # the rest have their own boxes
