@@ -1,5 +1,30 @@
 # Changelog
 
+## 0.4.0
+
+- **Plays from Plex**: with your Plex server's address and token in ⚙ Settings (same as the Media Manager
+  plugin: Get Info → View XML → the X-Plex-Token), the Plays column shows Plex's play counts, read when the app
+  starts, on F5 and every 10 minutes. Songs are matched by the file path Plex has, else by file name. Hover a count
+  to see Plex's and the file's. **Test** in Settings checks the connection.
+- **Plex rescans your Library folder** a few seconds after you Keep songs or change tags there (can be switched
+  off). Nothing else is ever changed in Plex.
+- **Find lyrics** on its own: **Ctrl+Shift+L**, the button by Lyrics, or right-click. One song: the lyrics found
+  (LRCLIB, lyrics.ovh, Genius) to check and save in one click. Several songs: the ones without lyrics get them,
+  saved straight away; you're told which weren't found.
+- **Every tag in the file** is listed in the Tags panel under "Other tags", each with ✕ to delete it when you Save
+  (click ✕ again to keep it).
+- **Alphabet jump bar** (# A–Z) above the songs: click a letter, or several in a row (M then Y for My Chemical
+  Romance), to jump to that artist. Typing letters in the list does the same.
+- **Genre, Language and Tempo** are drop-downs of the values your library already uses; you can still type a new one.
+- **Folders panel** (Review / Library) can be dragged to any edge of the window or floated; along the top or bottom
+  it takes a single row.
+- Bigger play / previous / next buttons; the −10s / +30s buttons are gone (Ctrl+← / Ctrl+→ still skip).
+- The album art's size and format are no longer shown in the Tags panel.
+- Fixed: **vinyl sides** (Disc "Side A" / "Side B") are album sides in the album view, with their own headings and
+  in the right order.
+- Fixed: an album could show twice when its songs' album names differed only in a curly quote, accents or case, or
+  only some songs had a Sort Artist.
+
 ## 0.3.0
 
 - **Album view** (the Library opens in it; **F3** or **▦ Layout** switches to the song list and back), laid out like

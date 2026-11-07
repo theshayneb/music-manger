@@ -105,6 +105,39 @@ class SettingsDialog(QDialog):
         self.theme.setCurrentIndex(max(0, self.theme.findData(settings.theme)))
         form.addRow("Theme", self.theme)
         layout.addLayout(form)
+
+        plex = QFormLayout()
+        title = QLabel("<b>Plex</b> (optional): the Plays column shows Plex's play counts, and Plex rescans your "
+                       "Library folder after you keep songs or change tags.")
+        title.setWordWrap(True)
+        layout.addWidget(title)
+        self.plex_url = QLineEdit(settings.plex_url)
+        self.plex_url.setPlaceholderText("http://localhost:32400")
+        plex.addRow("Server address", self.plex_url)
+        self.plex_token = QLineEdit(settings.plex_token)
+        self.plex_token.setEchoMode(QLineEdit.EchoMode.Password)
+        self.plex_token.setPlaceholderText("your X-Plex-Token")
+        token_help = QLabel("In Plex Web, open any song, choose ⋯ → Get Info → View XML, and copy what comes after "
+                            "X-Plex-Token= in the address bar.")
+        token_help.setWordWrap(True)
+        token_help.setStyleSheet("color: palette(placeholder-text);")
+        plex.addRow("Token", self.plex_token)
+        plex.addRow("", token_help)
+        test_row = QHBoxLayout()
+        test = QPushButton("Test")
+        self.plex_result = QLabel("")
+        self.plex_result.setWordWrap(True)
+        test.clicked.connect(self._test_plex)
+        test_row.addWidget(test)
+        test_row.addWidget(self.plex_result, 1)
+        plex.addRow("", test_row)
+        self.plex_plays = QCheckBox("Show Plex's play counts in the Plays column")
+        self.plex_plays.setChecked(settings.plex_plays)
+        plex.addRow("", self.plex_plays)
+        self.plex_refresh = QCheckBox("Ask Plex to rescan the Library folder after Keep and tag changes")
+        self.plex_refresh.setChecked(settings.plex_refresh)
+        plex.addRow("", self.plex_refresh)
+        layout.addLayout(plex)
         buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel)
         buttons.accepted.connect(self._accept)
         buttons.rejected.connect(self.reject)
@@ -112,6 +145,22 @@ class SettingsDialog(QDialog):
         self.error = QLabel("")
         self.error.setStyleSheet("color: #e0605a;")
         layout.addWidget(self.error)
+
+    def _test_plex(self) -> None:
+        from PySide6.QtWidgets import QApplication
+
+        from ..core.plex import Plex, PlexError
+
+        self.plex_result.setText("Connecting…")
+        QApplication.processEvents()
+        try:
+            client = Plex(self.plex_url.text(), self.plex_token.text())
+            sections = client.music_sections()
+        except PlexError as exc:
+            self.plex_result.setText(f"✗ {exc}")
+            return
+        names = ", ".join(s.get("title", "") for s in sections) or "none"
+        self.plex_result.setText(f"✓ Connected. Music libraries: {names}")
 
     def _accept(self) -> None:
         review, library = self.review.text().strip(), self.library.text().strip()
@@ -139,6 +188,8 @@ class SettingsDialog(QDialog):
         s.autoplay_next = self.autoplay.isChecked()
         s.confirm_delete = self.confirm.isChecked()
         s.theme = self.theme.currentData()
+        s.plex_url, s.plex_token = self.plex_url.text().strip(), self.plex_token.text().strip()
+        s.plex_plays, s.plex_refresh = self.plex_plays.isChecked(), self.plex_refresh.isChecked()
         self.accept()
 
 

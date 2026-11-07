@@ -50,3 +50,37 @@ def test_group_by_genre_and_none():
     songs = SASHA + [t("x", "1", album="Other", genre="Pop")]
     assert [s.heading for s in albums.build(songs, "genre")] == ["Pop", "R&B"]
     assert [len(s.albums) for s in albums.build(songs, "none")] == [2]
+
+
+def test_vinyl_sides():
+    songs = [t("I Should Have Known Better", "02", "Side A", album="A Hard Day's Night", artist="The Beatles",
+               album_artist="The Beatles"),
+             t("I'll Cry Instead", "02", "Side B", album="A Hard Day's Night", artist="The Beatles",
+               album_artist="The Beatles"),
+             t("If I Fell", "03", "Side A", album="A Hard Day's Night", artist="The Beatles",
+               album_artist="The Beatles")]
+    [section] = albums.build(songs)
+    [album] = section.albums
+    assert [(g.heading, [x.track for x in g.tracks]) for g in album.groups] == [
+        ("Side A", ["02", "03"]), ("Side B", ["02"])]
+
+
+def test_same_album_with_curly_quote_or_sort_artist_stays_together():
+    songs = [t("I Want You Back", "08", album="'N Sync", artist="*NSYNC", album_artist="*NSYNC", sort_artist="NSYNC"),
+             t("Tearin' Up My Heart", "01", album="’N Sync", artist="*NSYNC", album_artist="*NSYNC")]
+    [section] = albums.build(songs)
+    assert len(section.albums) == 1 and [x.track for x in section.albums[0].tracks] == ["01", "08"]
+
+
+def test_jump_bar_finds_artists():
+    from music_manager.ui.jump import Typed, find
+
+    songs = [t("x", "1", artist=a, album_artist=a) for a in
+             ("Adele", "My Chemical Romance", "Madonna", "The Vaccines", "50 Cent")]
+    songs.sort(key=lambda s: albums.artist_sort_key(s.album_artist))
+    names = [s.album_artist for s in songs]
+    assert names[find(songs, "m")] == "Madonna" and names[find(songs, "my")] == "My Chemical Romance"
+    assert names[find(songs, "v")] == "The Vaccines" and names[find(songs, "#")] == "50 Cent"
+    assert names[find(songs, "b")] == "Madonna"  # nothing starts with B: the next one
+    typed = Typed()
+    assert typed.add("M") == "M" and typed.add("Y") == "MY"

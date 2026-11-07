@@ -183,3 +183,21 @@ def test_musicbee_edition_custom_field_follows_the_edition(song, monkeypatch):
     tags.write(other, {"edition": "iTunes Version"})
     raw = ID3(other, translate=False)
     assert str(raw["COMM:Songs-DB_Custom2:eng"]) == "iTunes Version" and str(raw["TXXX:TSST"]) == "iTunes Version"
+
+
+def test_every_other_tag_is_listed_and_can_be_deleted(song):
+    from mutagen.id3 import COMM, TENC, TIT2, TXXX
+
+    path = str(song("o.mp3"))
+    id3 = ID3()
+    for frame in (TIT2(encoding=1, text=["Keep me"]), COMM(encoding=1, lang="eng", desc="", text=["Ripped by X"]),
+                  TENC(encoding=1, text=["LAME"]), TXXX(encoding=1, desc="MusicBrainz Album Id", text=["abc"])):
+        id3.add(frame)
+    id3.save(path, v2_version=3)
+    frames = tags.read(path, with_details=True).frames
+    names = {name: (key, value) for key, name, value in frames}
+    assert names["Comment"][1] == "Ripped by X" and names["Encoded by"][1] == "LAME"
+    assert names["MusicBrainz Album Id"][1] == "abc" and "Title" not in names
+    tags.write(path, {"remove": [names["Comment"][0], names["Encoded by"][0]]})
+    left = {name for _k, name, _v in tags.read(path, with_details=True).frames}
+    assert left == {"MusicBrainz Album Id"} and tags.read_track(path).title == "Keep me"

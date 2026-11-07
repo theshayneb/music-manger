@@ -61,6 +61,10 @@ class Settings:
     column_state: dict[str, str] = field(default_factory=dict)
     recent_move_folders: list[str] = field(default_factory=list)
     ffmpeg_path: str = ""
+    plex_url: str = ""          # e.g. http://localhost:32400
+    plex_token: str = ""        # X-Plex-Token
+    plex_plays: bool = True     # Plays column from Plex
+    plex_refresh: bool = True   # ask Plex to rescan the Library folder after Keep and tag changes
     window_geometry: str = ""
     window_state: str = ""
 

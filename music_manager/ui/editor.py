@@ -6,20 +6,22 @@ only written if you change it. Nothing is written until you click Save (Ctrl+S).
 
 from __future__ import annotations
 
-import html
-
 from PySide6.QtCore import QByteArray, Qt, Signal
 from PySide6.QtGui import QGuiApplication, QImage, QPixmap
 from PySide6.QtWidgets import (
+    QComboBox,
     QFileDialog,
     QFormLayout,
     QGridLayout,
     QHBoxLayout,
+    QHeaderView,
     QLabel,
     QLineEdit,
     QPlainTextEdit,
     QPushButton,
     QSizePolicy,
+    QTableWidget,
+    QTableWidgetItem,
     QToolButton,
     QVBoxLayout,
     QWidget,
@@ -66,11 +68,53 @@ class RatingStars(QWidget):
         self.note.setText(MIXED if mixed else "")
 
 
+class ComboField(QComboBox):
+    """A text box with a drop-down of the values the library already uses (Genre, Language,
+    Tempo). Anything can still be typed. Looks like a QLineEdit to the editor."""
+
+    textEdited = Signal(str)
+    returnPressed = Signal()
+
+    def __init__(self, parent: QWidget | None = None):
+        super().__init__(parent)
+        self.setEditable(True)
+        self.setInsertPolicy(QComboBox.InsertPolicy.NoInsert)
+        self.setMaxVisibleItems(20)
+        self.setSizeAdjustPolicy(QComboBox.SizeAdjustPolicy.AdjustToMinimumContentsLengthWithIcon)
+        self.lineEdit().textEdited.connect(self.textEdited)
+        self.lineEdit().returnPressed.connect(self.returnPressed)
+        self.activated.connect(lambda _i: self.textEdited.emit(self.currentText()))
+        completer = self.completer()
+        completer.setCaseSensitivity(Qt.CaseSensitivity.CaseInsensitive)
+        completer.setFilterMode(Qt.MatchFlag.MatchContains)
+
+    def setText(self, text: str) -> None:  # noqa: N802 - QLineEdit's name
+        self.setEditText(text)
+
+    def text(self) -> str:
+        return self.currentText()
+
+    def setPlaceholderText(self, text: str) -> None:  # noqa: N802
+        self.lineEdit().setPlaceholderText(text)
+
+    def set_choices(self, values: list[str]) -> None:
+        current = self.currentText()
+        self.blockSignals(True)
+        self.clear()
+        self.addItems(values)
+        self.setEditText(current)
+        self.blockSignals(False)
+
+
+CHOICE_FIELDS = ("genre", "language", "tempo")
+
+
 class TagEditor(QWidget):
     save_requested = Signal(list, dict)  # paths, changes
     rating_requested = Signal(list, int)  # paths, stars (saved straight away)
     lookup_requested = Signal()
     repair_requested = Signal()
+    lyrics_requested = Signal()
 
     def __init__(self, parent: QWidget | None = None):
         super().__init__(parent)
@@ -115,7 +159,7 @@ class TagEditor(QWidget):
         form.setFieldGrowthPolicy(QFormLayout.FieldGrowthPolicy.AllNonFixedFieldsGrow)
         self.edits: dict[str, QLineEdit] = {}
         for key in ("title", "artist", "album_artist", "album", "edition", "year", "genre", "language", "tempo"):
-            edit = QLineEdit()
+            edit = ComboField() if key in CHOICE_FIELDS else QLineEdit()
             self.edits[key] = edit
             form.addRow(tags.FIELD_LABELS[key], edit)
         self.edits["genre"].setToolTip("Several genres: separate them with ;")
@@ -143,16 +187,32 @@ class TagEditor(QWidget):
         self.lookup_btn.clicked.connect(self.lookup_requested)
         outer.addWidget(self.lookup_btn)
 
-        outer.addWidget(QLabel("Lyrics (saved in the file and as a .txt next to it)"))
+        lyrics_row = QHBoxLayout()
+        lyrics_label = QLabel("Lyrics")
+        lyrics_label.setToolTip("Saved in the file and as a .txt next to it")
+        lyrics_row.addWidget(lyrics_label, 1)
+        self.find_lyrics_btn = QPushButton("🔎 Find lyrics")
+        self.find_lyrics_btn.setToolTip("Look up just the lyrics (Ctrl+Shift+L). With several songs selected, those without lyrics get them")
+        self.find_lyrics_btn.clicked.connect(self.lyrics_requested)
+        lyrics_row.addWidget(self.find_lyrics_btn)
+        outer.addLayout(lyrics_row)
         self.lyrics = QPlainTextEdit()
         self.lyrics.setPlaceholderText("Paste lyrics here")
         self.lyrics.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
         outer.addWidget(self.lyrics, 1)
-        self.extra = QLabel("")
-        self.extra.setWordWrap(True)
-        self.extra.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
-        self.extra.setStyleSheet("color: palette(placeholder-text);")
-        self.extra.setToolTip("Other tags in this file. Music Manager keeps them as they are.")
+        self.extra_title = QLabel("Other tags in this file (✕ deletes one when you Save)")
+        outer.addWidget(self.extra_title)
+        self.extra = QTableWidget(0, 3)
+        self.extra.setHorizontalHeaderLabels(["Tag", "Value", ""])
+        self.extra.verticalHeader().setVisible(False)
+        self.extra.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
+        self.extra.setWordWrap(False)
+        self.extra.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeMode.ResizeToContents)
+        self.extra.horizontalHeader().setSectionResizeMode(1, QHeaderView.ResizeMode.Stretch)
+        self.extra.horizontalHeader().setSectionResizeMode(2, QHeaderView.ResizeMode.Fixed)
+        self.extra.horizontalHeader().resizeSection(2, 30)
+        self.extra.setMinimumHeight(90)
+        self.extra.setMaximumHeight(220)
         outer.addWidget(self.extra)
 
         buttons = QHBoxLayout()
@@ -215,9 +275,7 @@ class TagEditor(QWidget):
             self.lyrics.setPlaceholderText("Paste lyrics here")
             self.lyrics.setPlainText(details.lyrics if details else "")
         self._show_cover(details.cover if details else None, tracks)
-        extra = details.extra if (details and not many) else {}
-        self.extra.setText("Other tags: " + " · ".join(f"<b>{html.escape(k)}</b>: {html.escape(v)}"
-                                                       for k, v in sorted(extra.items())) if extra else "")
+        self._show_frames(details.frames if (details and not many) else [], many)
         self.lookup_btn.setEnabled(len(tracks) == 1)
         for b in (self.art_file, self.art_paste, self.art_remove):
             b.setEnabled(writable)
@@ -264,10 +322,11 @@ class TagEditor(QWidget):
         pix = QPixmap.fromImage(image).scaled(COVER_SIZE, COVER_SIZE, Qt.AspectRatioMode.KeepAspectRatio,
                                                Qt.TransformationMode.SmoothTransformation)
         self.cover.setPixmap(pix)
-        info = f"{image.width()} × {image.height()}, {len(data) // 1024} KB"  # type: ignore[arg-type]
+        # No size or format (not needed); only what helps: unsaved, or how many of several songs have art.
+        info = "Not saved yet" if new else ""
         if len(tracks) > 1 and not new:
-            info += f"  (first song; {sum(t.has_cover for t in tracks)} of {len(tracks)} have art)"
-        self.cover_info.setText(info + ("  — not saved yet" if new else ""))
+            info = f"{sum(t.has_cover for t in tracks)} of {len(tracks)} songs have art"
+        self.cover_info.setText(info)
 
     # ------------------------------------------------------------ editing
     def _mark(self) -> None:
@@ -349,6 +408,47 @@ class TagEditor(QWidget):
         if key in self.edits:
             self.edits[key].setText(value)
             self._edited(key, value)
+
+    def _show_frames(self, frames: list[tuple[str, str, str]], many: bool) -> None:
+        self.extra.setRowCount(len(frames))
+        for r, (key, name, value) in enumerate(frames):
+            name_item = QTableWidgetItem(name)
+            name_item.setToolTip(key)
+            value_item = QTableWidgetItem(value)
+            value_item.setToolTip(value)
+            self.extra.setItem(r, 0, name_item)
+            self.extra.setItem(r, 1, value_item)
+            button = QToolButton(text="✕")
+            button.setAutoRaise(True)
+            button.setToolTip(f"Delete the {name} tag from this file (when you Save)")
+            button.clicked.connect(lambda _=False, key=key, r=r: self._remove_frame(key, r))
+            self.extra.setCellWidget(r, 2, button)
+        self.extra.resizeRowsToContents()
+        self.extra_title.setText("Other tags in this file (✕ deletes one when you Save)" if frames else
+                                 ("Select one song to see its other tags" if many else "No other tags in this file"))
+        self.extra.setVisible(bool(frames))
+
+    def _remove_frame(self, key: str, row: int) -> None:
+        removing = self.changed.setdefault("remove", [])
+        font = self.extra.item(row, 0).font()
+        if key in removing:  # clicked again: keep it after all
+            removing.remove(key)
+            if not removing:
+                del self.changed["remove"]
+            font.setStrikeOut(False)
+        else:
+            removing.append(key)
+            font.setStrikeOut(True)
+        for col in (0, 1):
+            self.extra.item(row, col).setFont(font)
+        self._mark()
+
+    def set_choices(self, choices: dict[str, list[str]]) -> None:
+        """The values offered in the Genre, Language and Tempo drop-downs."""
+        for key, values in choices.items():
+            edit = self.edits.get(key)
+            if isinstance(edit, ComboField):
+                edit.set_choices(values)
 
     def apply_lookup(self, fields: dict[str, str], cover: bytes | None, lyrics: str | None) -> None:
         """Put what was chosen in the lookup window into the editor, ready to Save."""

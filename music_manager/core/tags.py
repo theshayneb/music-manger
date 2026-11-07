@@ -144,6 +144,9 @@ class Details:
     cover: bytes | None = None
     cover_mime: str = ""
     extra: dict[str, str] = field(default_factory=dict)
+    # Every tag in the file that the Tags panel has no box for: (key, name, value). The key is
+    # what write(..., {"remove": [keys]}) deletes.
+    frames: list[tuple[str, str, str]] = field(default_factory=list)
 
 
 # ---------------------------------------------------------------- what a file really is
@@ -361,6 +364,7 @@ def _read_mp3(d: Details) -> None:
     if pics:
         pic = next((p for p in pics if p.type == 3), pics[0])
         d.cover, d.cover_mime = pic.data, pic.mime
+    d.frames = _other_id3(tags, t)
 
 
 KNOWN_TXXX = {"REPLAYGAIN_TRACK_GAIN", "REPLAYGAIN_TRACK_PEAK", "TEMPO", "TSST"}
@@ -395,6 +399,70 @@ def friendly_comm(desc: str) -> str:
     if desc.lower().startswith("songs-db_"):
         return desc[9:].replace("_", " ").title() + " (MusicBee)"
     return f"Comment: {desc}"
+
+
+FRAME_NAMES = {
+    "TCOM": "Composer", "TENC": "Encoded by", "TSSE": "Encoder settings", "TCOP": "Copyright", "TBPM": "BPM",
+    "TPUB": "Publisher", "TMED": "Media type", "TOPE": "Original artist", "TIT1": "Grouping", "TIT3": "Subtitle",
+    "TSRC": "ISRC", "TDOR": "Original date", "TORY": "Original year", "TSOA": "Sort album", "TSOT": "Sort title",
+    "TSO2": "Sort album artist", "TSOP": "Sort artist", "TSOC": "Sort composer", "TEXT": "Lyricist",
+    "TOAL": "Original album", "TFLT": "File type", "TKEY": "Key", "TLEN": "Length", "TOWN": "Owner",
+    "TPE3": "Conductor", "TPE4": "Remixed by", "TCMP": "Compilation", "TDRL": "Release date", "TDTG": "Tagging date",
+    "TMOO": "Mood", "TPRO": "Produced", "TRSN": "Radio station", "WXXX": "Web page", "WOAR": "Artist web page",
+    "WCOM": "Buy at", "WOAF": "File web page", "WOAS": "Source web page", "PRIV": "Private data",
+    "UFID": "Unique file ID", "GEOB": "Embedded file", "MCDI": "CD identifier", "PCNT": "Play count",
+    "POPM": "Rating / play count", "SYLT": "Synced lyrics", "COMM": "Comment", "TXXX": "Custom", "USLT": "Lyrics",
+    "APIC": "Picture", "PRIV:": "Private data", "RVA2": "Volume adjustment", "RVAD": "Volume adjustment",
+    "TDAT": "Date", "TIME": "Time", "TRDA": "Recording dates", "TSIZ": "Size", "MLLT": "MPEG lookup table",
+    "OWNE": "Ownership", "LINK": "Link", "ETCO": "Event timing", "CHAP": "Chapter", "CTOC": "Table of contents",
+}
+MANAGED_ID3 = {"TIT2", "TPE1", "TPE2", "TALB", "TCON", "TDRC", "TYER", "TRCK", "TPOS", "TLAN", "TSST"}
+MANAGED_VORBIS = {"title", "artist", "albumartist", "album artist", "album_artist", "album", "date", "year", "genre",
+                  "tracknumber", "tracktotal", "totaltracks", "discnumber", "disctotal", "totaldiscs", "language",
+                  "tempo", "discsubtitle", "edition", "rating", "lyrics", "unsyncedlyrics"}
+
+
+def _frame_text(frame) -> str:  # type: ignore[no-untyped-def]
+    text = getattr(frame, "text", None)
+    if text is not None and not isinstance(text, (bytes, bytearray)):
+        values = text if isinstance(text, list) else [text]
+        return " / ".join(str(v) for v in values)[:500]
+    if hasattr(frame, "url"):
+        return str(frame.url)
+    if hasattr(frame, "count") and not hasattr(frame, "rating"):
+        return str(frame.count)
+    if hasattr(frame, "rating"):
+        plays = getattr(frame, "count", 0) or 0
+        return f"{popm_to_stars(int(frame.rating))} stars, played {plays} times ({frame.email})"
+    data = getattr(frame, "data", None)
+    if isinstance(data, (bytes, bytearray)):
+        owner = getattr(frame, "owner", "") or getattr(frame, "desc", "")
+        return f"{owner + ': ' if owner else ''}{len(data):,} bytes of data"
+    return str(frame)[:500]
+
+
+def _other_id3(tags, t: Track) -> list[tuple[str, str, str]]:  # type: ignore[no-untyped-def]
+    """Every frame the Tags panel doesn't show in its own box (title, art, lyrics, rating... do)."""
+    out = []
+    for key, frame in tags.items():
+        fid = frame.FrameID
+        if fid in MANAGED_ID3 or fid in ("APIC", "USLT"):
+            continue
+        desc = getattr(frame, "desc", "") or ""
+        if fid == "TXXX" and desc.upper() in ("TSST", "TEMPO"):
+            continue
+        if fid == "COMM" and (desc.lower() == "songs-db_tempo" or (t.edition_field and desc == t.edition_field)):
+            continue
+        if fid == "POPM" and int(getattr(frame, "count", 0) or 0) == 0:
+            continue  # just the rating, which has its own stars
+        if fid == "TXXX":
+            name = desc
+        elif fid == "COMM":
+            name = friendly_comm(desc) if desc else "Comment"
+        else:
+            name = FRAME_NAMES.get(fid, fid) + (f" ({desc})" if desc else "")
+        out.append((key, name, _frame_text(frame)))
+    return sorted(out, key=lambda x: x[1].casefold())
 
 
 def _vorbis(tags, *keys: str) -> str:  # type: ignore[no-untyped-def]
@@ -440,6 +508,8 @@ def _read_flac(d: Details) -> None:
     if audio.pictures:
         pic = next((p for p in audio.pictures if p.type == 3), audio.pictures[0])
         d.cover, d.cover_mime = pic.data, pic.mime
+    d.frames = [(f"vorbis:{k}", k.upper(), "; ".join(str(v) for v in tags.get(k, [])))
+                for k in sorted({k.lower() for k in (tags.keys() if tags else [])}) if k not in MANAGED_VORBIS]
 
 
 def _read_other(d: Details) -> None:
@@ -583,6 +653,9 @@ def _write_mp3(path: str, c: dict) -> None:
             tags.add(COMM(encoding=1, lang="eng", desc="", text=[c["comment"]]))
     # mutagen keeps tags as v2.4 in memory; convert v2.4-only frames (e.g. the year, TDRC -> TYER)
     # or the v2.3 file would contain frames that v2.3 readers don't know.
+    for key in c.get("remove", []):
+        if key in tags:
+            del tags[key]
     tags.update_to_v23()
     tags.save(path, v2_version=3, v23_sep="; ")
 
@@ -638,6 +711,10 @@ def _write_flac(path: str, c: dict) -> None:
             pic = Picture()
             pic.type, pic.mime, pic.data = 3, mime, data
             audio.add_picture(pic)
+    for key in c.get("remove", []):
+        name = key.split(":", 1)[1] if key.startswith("vorbis:") else key
+        if name in tags:
+            del tags[name]
     audio.save()
 
 

@@ -35,6 +35,16 @@ HIDDEN_BY_DEFAULT = {"album_artist", "genre", "track", "language", "tempo"}
 SORT_ROLE = Qt.ItemDataRole.UserRole + 1
 
 
+# Play counts from Plex, by os.path.normcase(path); filled in by the window when Plex is set up.
+PLEX_PLAYS: dict[str, int] = {}
+
+
+def plays(t: Track) -> int:
+    """Plex's play count when Plex has the song, else the one saved in the file."""
+    plex = PLEX_PLAYS.get(os.path.normcase(t.path))
+    return plex if plex is not None else t.plays
+
+
 def fmt_time(seconds: float) -> str:
     s = int(round(seconds or 0))
     h, rest = divmod(s, 3600)
@@ -79,6 +89,11 @@ class TrackModel(QAbstractTableModel):
             if key == "lyrics" and t.has_lyrics:
                 where = [w for w, ok in (("in the file", t.lyrics_in_file), (".txt file", t.lyrics_file)) if ok]
                 return "Lyrics: " + " and ".join(where)
+            if key == "plays":
+                plex = PLEX_PLAYS.get(os.path.normcase(t.path))
+                if plex is not None:
+                    return f"Played {plex} times in Plex" + (f" ({t.plays} in the file)" if t.plays else "")
+                return f"{t.plays} plays saved in the file" if t.plays else None
             if key == "bitrate" and t.bitrate:
                 return f"{t.bitrate} kbps {t.bitrate_mode}, {t.sample_rate / 1000:g} kHz".strip()
             return t.path if key == "name" else None
@@ -104,7 +119,8 @@ class TrackModel(QAbstractTableModel):
         if key == "length":
             return fmt_time(t.length) if t.length else ""
         if key == "plays":
-            return str(t.plays) if t.plays else ""
+            n = plays(t)
+            return str(n) if n else ""
         if key == "bitrate":
             return f"{t.bitrate}{' VBR' if t.bitrate_mode == 'VBR' else ''}" if t.bitrate else ""
         if key == "lyrics":
@@ -119,7 +135,9 @@ class TrackModel(QAbstractTableModel):
 
     @staticmethod
     def sort_value(t: Track, key: str):  # type: ignore[no-untyped-def]
-        if key in ("rating", "length", "bitrate", "plays"):
+        if key == "plays":
+            return float(plays(t))
+        if key in ("rating", "length", "bitrate"):
             return float(getattr(t, key) or 0)
         if key == "track":
             try:

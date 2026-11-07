@@ -24,7 +24,6 @@ from PySide6.QtWidgets import (
     QMessageBox,
     QScrollArea,
     QSizePolicy,
-    QSplitter,
     QStackedWidget,
     QTableView,
     QToolBar,
@@ -34,15 +33,18 @@ from PySide6.QtWidgets import (
 )
 
 from .. import __version__
-from ..core import convert, fileops, keep, library, loudness, naming, repair, tags
+from ..core import convert, fileops, keep, library, loudness, naming, online, repair, tags
 from ..core.ffmpeg import find_ffmpeg
+from ..core.plex import Plex, by_file
+from ..core.plex import match as plex_match
 from ..core.settings import Settings
 from ..core.tags import Track
 from .albums import AlbumModel, ArtDelegate, thumbnail
 from .dialogs import PlanDialog, SettingsDialog, ask_text
 from .editor import TagEditor
-from .lookup import LookupDialog
-from .model import COLUMN_KEYS, HIDDEN_BY_DEFAULT, TrackFilter, TrackModel
+from .jump import JumpBar, JumpTable, Typed, find
+from .lookup import LookupDialog, net
+from .model import COLUMN_KEYS, HIDDEN_BY_DEFAULT, PLEX_PLAYS, TrackFilter, TrackModel
 from .player import PlayerBar
 from .theme import apply_theme
 from .workers import Background
@@ -85,6 +87,16 @@ class MainWindow(QMainWindow):
         self._build_ui()
         self._build_actions()
         self._restore_layout()
+        self._plex_reading = False
+        self._plex_tracks: tuple | None = None
+        self._plex_timer = QTimer(self)
+        self._plex_timer.setInterval(10 * 60 * 1000)  # play counts every 10 minutes
+        self._plex_timer.timeout.connect(self.refresh_plex_plays)
+        self._plex_timer.start()
+        self._plex_scan_timer = QTimer(self)
+        self._plex_scan_timer.setSingleShot(True)
+        self._plex_scan_timer.setInterval(5000)
+        self._plex_scan_timer.timeout.connect(self._plex_rescan)
         QTimer.singleShot(0, self._start)
 
     # ================================================================ building
@@ -107,8 +119,18 @@ class MainWindow(QMainWindow):
         lv.addWidget(self.view_hint)
         lv.addStretch(1)
         left.setMaximumWidth(220)
+        # A panel you can drag to any edge of the window (or float); on the top or bottom edge
+        # Review and Library sit side by side, so it takes one row.
+        self.folders_dock = QDockWidget("Folders", self)
+        self.folders_dock.setObjectName("folders")
+        self.folders_dock.setWidget(left)
+        self.folders_dock.setFeatures(QDockWidget.DockWidgetFeature.DockWidgetMovable
+                                      | QDockWidget.DockWidgetFeature.DockWidgetFloatable)
+        self.folders_dock.setToolTip("Drag this panel by its title to move it to another edge of the window")
+        self.folders_dock.dockLocationChanged.connect(self._folders_moved)
+        self._folders_left = left
 
-        self.table = QTableView()
+        self.table = JumpTable()
         self.table.setModel(self.proxy)
         self.table.setSortingEnabled(True)
         self.table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
@@ -129,7 +151,7 @@ class MainWindow(QMainWindow):
         self.album_model = AlbumModel(self.model)
         self.album_model.layout.update(self.settings.album_layout)
         self.album_model.cover_loader = self._load_cover
-        self.albums = QTableView()
+        self.albums = JumpTable()
         self.albums.setModel(self.album_model)
         self.albums.setItemDelegate(ArtDelegate(self.album_model, self.albums))
         self.albums.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
@@ -160,13 +182,16 @@ class MainWindow(QMainWindow):
         center = QWidget()
         cv = QVBoxLayout(center)
         cv.setContentsMargins(0, 0, 0, 0)
+        self.jump_bar = JumpBar()
+        self.jump_bar.jump.connect(self.jump_to)
+        self._typed = Typed()
+        cv.addWidget(self.jump_bar)
         cv.addWidget(self.stack, 1)
+        for view in (self.table, self.albums):
+            view.typed.connect(self.jump_to)
 
-        splitter = QSplitter()
-        splitter.addWidget(left)
-        splitter.addWidget(center)
-        splitter.setStretchFactor(1, 1)
-        self.setCentralWidget(splitter)
+        self.setCentralWidget(center)
+        self.addDockWidget(Qt.DockWidgetArea.LeftDockWidgetArea, self.folders_dock)
 
         self.editor = TagEditor()
         scroll = QScrollArea()
@@ -202,6 +227,7 @@ class MainWindow(QMainWindow):
         self.editor.rating_requested.connect(self.set_rating)
         self.editor.lookup_requested.connect(self.lookup_selected)
         self.editor.repair_requested.connect(self.repair_selected)
+        self.editor.lyrics_requested.connect(self.find_lyrics_selected)
         self.player.next_requested.connect(lambda: self.play_relative(1))
         self.player.previous_requested.connect(lambda: self.play_relative(-1))
         self.player.play_requested.connect(self.play_selected)
@@ -266,12 +292,14 @@ class MainWindow(QMainWindow):
         self.layout_menu.aboutToShow.connect(self._fill_layout_menu)
         self.layout_btn.setMenu(self.layout_menu)
         bar.addWidget(self.layout_btn)
-        action("⟳ Refresh", self.reload, "F5", "Read the folder again")
+        action("⟳ Refresh", lambda: (self.reload(), self.refresh_plex_plays()), "F5",
+               "Read the folder again (and Plex's play counts)")
         action("⚙ Settings", self.open_settings, "Ctrl+,")
 
         action("Save tags", self.editor.save, "Ctrl+S", toolbar=False)
         action("Albums / song list", self.toggle_layout, "F3", toolbar=False)
         action("Look up online", self.lookup_selected, "Ctrl+L", toolbar=False)
+        action("Find lyrics", self.find_lyrics_selected, "Ctrl+Shift+L", toolbar=False)
         action("Search", lambda: (self.search.setFocus(), self.search.selectAll()), "Ctrl+F", toolbar=False)
         action("Rename one", self.rename_one, "F2", toolbar=False)
         action("Show in Explorer", self.show_in_explorer, "Ctrl+E", toolbar=False)
@@ -322,7 +350,103 @@ class MainWindow(QMainWindow):
             if key in widths:
                 header.resizeSection(col, widths[key])
 
+    def jump_to(self, letter: str) -> None:
+        """Scroll to the first artist starting with the letters clicked or typed (M, then Y: My…)."""
+        prefix = self._typed.add(letter)
+        order = self.order()
+        i = find(order, prefix)
+        if i < 0:
+            return
+        view = self.active()
+        row = self._row_of(order[i].path)
+        if self.album_mode():
+            # Show the artist heading (or the album) at the top, not just the song.
+            rows = self.album_model.rows
+            start = row
+            while start > 0 and rows[start - 1].kind != "gap" and rows[start].kind != "section":
+                start -= 1
+            if start > 0 and rows[start - 1].kind == "section":
+                start -= 1
+            row = start
+        index = view.model().index(row, 0)
+        view.scrollTo(index, QAbstractItemView.ScrollHint.PositionAtTop)
+        self.flash(f"Jumped to “{prefix.upper()}”: {order[i].album_artist or order[i].artist or order[i].name}")
+
+    def _folders_moved(self, area: Qt.DockWidgetArea) -> None:
+        across = area in (Qt.DockWidgetArea.TopDockWidgetArea, Qt.DockWidgetArea.BottomDockWidgetArea)
+        self.views.setFlow(QListWidget.Flow.LeftToRight if across else QListWidget.Flow.TopToBottom)
+        self.views.setWrapping(False)
+        if across:
+            self.views.setFixedHeight(self.views.sizeHintForRow(0) + 8)
+            self.views.setMaximumWidth(260)
+            self.view_hint.hide()
+            self._folders_left.setMaximumWidth(16777215)
+            self._folders_left.layout().setDirection(QVBoxLayout.Direction.LeftToRight)
+        else:
+            self.views.setFixedHeight(self.views.sizeHintForRow(0) * len(VIEWS) + 8)
+            self.views.setMaximumWidth(220)
+            self.view_hint.show()
+            self._folders_left.setMaximumWidth(220)
+            self._folders_left.layout().setDirection(QVBoxLayout.Direction.TopToBottom)
+
+    # ================================================================ Plex
+    def plex_ready(self) -> bool:
+        return bool(self.settings.plex_url.strip() and self.settings.plex_token.strip())
+
+    def refresh_plex_plays(self) -> None:
+        """Read every song's play count from Plex (in the background)."""
+        if not (self.plex_ready() and self.settings.plex_plays) or self._plex_reading:
+            if not self.settings.plex_plays and PLEX_PLAYS:
+                PLEX_PLAYS.clear()
+                self._plex_changed()
+            return
+        self._plex_reading = True
+        client = Plex(self.settings.plex_url, self.settings.plex_token)
+
+        def done(result, error) -> None:  # type: ignore[no-untyped-def]
+            self._plex_reading = False
+            if error:
+                self.flash(f"Plex play counts not updated: {error}")
+                return
+            self._plex_tracks = by_file(result or [])
+            self._apply_plex()
+
+        net().run(client.all_tracks, done)
+
+    def _apply_plex(self) -> None:
+        if not self._plex_tracks:
+            return
+        paths, names = self._plex_tracks
+        for t in self.model.tracks:
+            found = plex_match(t.path, paths, names)
+            if found is not None:
+                PLEX_PLAYS[os.path.normcase(t.path)] = found.plays
+        self._plex_changed()
+
+    def _plex_changed(self) -> None:
+        if self.model.tracks:
+            self.model.dataChanged.emit(self.model.index(0, 0),
+                                        self.model.index(len(self.model.tracks) - 1, self.model.columnCount() - 1))
+        if self.album_model.rows:
+            self.album_model.dataChanged.emit(self.album_model.index(0, 0), self.album_model.index(
+                len(self.album_model.rows) - 1, self.album_model.columnCount() - 1))
+
+    def plex_rescan_soon(self) -> None:
+        """After Keep or tag changes in the Library: ask Plex to rescan the folder (once, a few seconds later)."""
+        if self.plex_ready() and self.settings.plex_refresh and self.settings.library_folder:
+            self._plex_scan_timer.start()
+
+    def _plex_rescan(self) -> None:
+        client = Plex(self.settings.plex_url, self.settings.plex_token)
+        folder = self.settings.library_folder
+
+        def done(name, error) -> None:  # type: ignore[no-untyped-def]
+            self.flash(f"Plex couldn't rescan the Library: {error}" if error else f"Plex is rescanning “{name}”.")
+
+        net().run(lambda: client.refresh_folder(folder), done)
+
     def _start(self) -> None:
+        self._folders_moved(self.dockWidgetArea(self.folders_dock))
         self._restore_album_columns()
         if not self.settings.review_folder and not self.settings.library_folder:
             self.open_settings(first_run=True)
@@ -404,6 +528,11 @@ class MainWindow(QMainWindow):
             else:
                 self.status.setText("")
                 self.scan_bg.run(self.cache.save)
+                self._update_choices()
+                if self._plex_tracks is None:
+                    self.refresh_plex_plays()
+                else:
+                    self._apply_plex()
 
         self.scan_bg.run(read, done)
 
@@ -607,6 +736,19 @@ class MainWindow(QMainWindow):
 
         self.bg.run(read, done)
 
+    def _update_choices(self) -> None:
+        """Genre, Language and Tempo drop-downs: every value used in either folder (from the tag cache)."""
+        found: dict[str, dict[str, str]] = {"genre": {}, "language": {}, "tempo": {}}
+        tracks = [t.to_dict() for t in self.model.tracks] + list(self.cache._items.values())
+        for item in tracks:
+            for key, values in found.items():
+                parts = str(item.get(key) or "").split(";") if key == "genre" else [str(item.get(key) or "")]
+                for part in parts:
+                    part = part.strip()
+                    if part:
+                        values.setdefault(part.casefold(), part)
+        self.editor.set_choices({k: sorted(v.values(), key=str.casefold) for k, v in found.items()})
+
     def save_tags(self, paths: list[str], changes: dict) -> None:
         if not paths or not changes:
             return
@@ -626,6 +768,10 @@ class MainWindow(QMainWindow):
         def done(failures, error) -> None:  # type: ignore[no-untyped-def]
             self._resume(state)
             self._report("Saved tags", len(paths), failures, error)
+            library = self.settings.library_folder
+            if library and any(fileops.same_path(os.path.dirname(p), library) or
+                               os.path.normcase(p).startswith(os.path.normcase(library) + os.sep) for p in paths):
+                self.plex_rescan_soon()
             self._refresh_tracks({p: p for p in paths})
 
         self.bg.run(work, done)
@@ -649,6 +795,53 @@ class MainWindow(QMainWindow):
         picked = len(dialog.chosen_fields) + bool(dialog.chosen_cover) + (dialog.chosen_lyrics is not None)
         self.flash(f"{picked} change{'s' if picked != 1 else ''} from the lookup are in the Tags panel: "
                    "check them and click Save." if picked else "Nothing was picked.")
+
+    def find_lyrics_selected(self) -> None:
+        tracks = [t for t in self.selected_tracks() if tags.can_write(t.path) and not t.error]
+        if not tracks or self._busy:
+            self.flash("Select songs to find lyrics for (MP3 or FLAC).")
+            return
+        if len(tracks) == 1:
+            track = tracks[0]
+            details = self.editor._details if [t.path for t in self.editor.tracks] == [track.path] else None
+            dialog = LookupDialog(track, details, self, lyrics_only=True)
+            if dialog.exec() == QDialog.DialogCode.Accepted and dialog.chosen_lyrics is not None:
+                self.editor.changed.pop("lyrics", None)
+                self.save_tags([track.path], {"lyrics": dialog.chosen_lyrics})
+            return
+        missing = [t for t in tracks if not t.has_lyrics]
+        if not missing:
+            self.flash(f"All {len(tracks)} songs already have lyrics.")
+            return
+        answer = QMessageBox.question(
+            self, "Find lyrics",
+            f"Look up lyrics for the {len(missing)} of these {len(tracks)} songs that have none, and save "
+            "them straight away (in the file and as a .txt)?\n\nLRCLIB is tried first, then lyrics.ovh and "
+            "Genius. Songs with lyrics already are left alone.")
+        if answer != QMessageBox.StandardButton.Yes:
+            return
+        state = self._release([t.path for t in missing])
+
+        def one(t: Track) -> bool:
+            found = online.best_lyrics(t.artist, t.title or os.path.splitext(t.name)[0], t.album, t.length)
+            if not found:
+                return False
+            tags.write(t.path, {"lyrics": found.text})
+            return True
+
+        def finished(results, failures) -> None:  # type: ignore[no-untyped-def]
+            self._resume(state)
+            got = [t for t, ok in results if ok]
+            none = [t.name for t, ok in results if not ok]
+            self._report("Found lyrics for", len(got), failures, None)
+            if none:
+                QMessageBox.information(self, "Find lyrics", f"No lyrics were found for {len(none)} songs:\n\n"
+                                        + "\n".join(f"• {n}" for n in none[:20]) +
+                                        ("\n…" if len(none) > 20 else "") +
+                                        "\n\nTry them one at a time (the artist and title can be changed there).")
+            self._refresh_tracks({t.path: t.path for t in got})
+
+        self._run_each("Finding lyrics", missing, one, finished)
 
     def set_rating(self, paths: list[str], stars: int) -> None:
         paths = [p for p in paths if tags.can_write(p)]
@@ -697,6 +890,8 @@ class MainWindow(QMainWindow):
         self.model.remove(kept)
         self._stale.add("library")
         self._report("Kept", len(kept), failures, None, warnings)
+        if kept:
+            self.plex_rescan_soon()
         self._after_removal(next_row, playing)
 
     def delete_selected(self) -> None:
@@ -917,6 +1112,7 @@ class MainWindow(QMainWindow):
             menu.addAction("🛠 Repair file…", self.repair_selected)
         if len(tracks) == 1:
             menu.addAction("🔎 Look up online… (Ctrl+L)", self.lookup_selected)
+        menu.addAction("🔎 Find lyrics (Ctrl+Shift+L)", self.find_lyrics_selected)
         rating = menu.addMenu("Rating")
         for n in range(5, -1, -1):
             rating.addAction(("★" * n) or "No rating", lambda n=n: self.set_rating(self.selected_paths(), n))
@@ -967,6 +1163,7 @@ class MainWindow(QMainWindow):
         if new != old and not first_run:
             self._stale.update(VIEWS)
             self.reload()
+        self.refresh_plex_plays()
 
     # ================================================================ album view
     def _apply_mode(self) -> None:

@@ -503,3 +503,16 @@ def find_lyrics(artist: str, title: str, album: str = "", length: float = 0) -> 
             if result:
                 found.append(result)
     return found, problems
+
+
+LYRICS_PREFERENCE = ["LRCLIB", "lyrics.ovh", "Genius"]
+
+
+def best_lyrics(artist: str, title: str, album: str = "", length: float = 0) -> Lyrics | None:
+    """The lyrics to use without asking (for many songs at once): LRCLIB first (matched by artist,
+    title and length), then lyrics.ovh, then Genius."""
+    found, problems = find_lyrics(artist, title, album, length)
+    if not found and problems and len(problems) == 3:
+        raise OnlineError("; ".join(problems))
+    found.sort(key=lambda lyr: LYRICS_PREFERENCE.index(lyr.source) if lyr.source in LYRICS_PREFERENCE else 9)
+    return found[0] if found else None

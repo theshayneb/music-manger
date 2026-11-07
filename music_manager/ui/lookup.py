@@ -64,8 +64,10 @@ def _same(a: str, b: str) -> bool:
 
 
 class LookupDialog(QDialog):
-    def __init__(self, track: Track, details: Details | None, parent: QWidget | None = None):
+    def __init__(self, track: Track, details: Details | None, parent: QWidget | None = None,
+                 lyrics_only: bool = False):
         super().__init__(parent)
+        self.lyrics_only = lyrics_only
         self.track, self.details = track, details
         self.setWindowTitle(f"Look up online — {track.name}")
         self.resize(1080, 680)
@@ -101,6 +103,11 @@ class LookupDialog(QDialog):
         self._build_tags_tab()
         self._build_art_tab()
         self._build_lyrics_tab()
+        if lyrics_only:  # just the lyrics: nothing to untick
+            self.tabs.removeTab(1)
+            self.tabs.removeTab(0)
+            self.setWindowTitle(f"Find lyrics — {track.name}")
+            self.resize(760, 640)
 
         bottom = QHBoxLayout()
         self.status = QLabel("")
@@ -108,7 +115,8 @@ class LookupDialog(QDialog):
         self.status.setStyleSheet("color: palette(placeholder-text);")
         bottom.addWidget(self.status, 1)
         self.buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel)
-        self.buttons.button(QDialogButtonBox.StandardButton.Ok).setText("Use what's ticked")
+        self.buttons.button(QDialogButtonBox.StandardButton.Ok).setText(
+            "Save these lyrics" if lyrics_only else "Use what's ticked")
         self.buttons.accepted.connect(self._accept)
         self.buttons.rejected.connect(self.reject)
         bottom.addWidget(self.buttons)
@@ -229,12 +237,14 @@ class LookupDialog(QDialog):
         while self.lyric_list.count() > (1 if has_current else 0):
             self.lyric_list.takeItem(self.lyric_list.count() - 1)
         self.lyrics_found = []
-        self.status.setText("Searching iTunes, MusicBrainz and Deezer, and looking for lyrics…")
-        self._pending = 2
+        self.status.setText("Looking for lyrics…" if self.lyrics_only else
+                            "Searching iTunes, MusicBrainz and Deezer, and looking for lyrics…")
+        self._pending = 1 if self.lyrics_only else 2
         self._problems: list[str] = []
         length = self.track.length
         album = self.track.album
-        net().run(lambda: online.search(artist, title, length), lambda res, err: self._got_tags(gen, res, err))
+        if not self.lyrics_only:
+            net().run(lambda: online.search(artist, title, length), lambda res, err: self._got_tags(gen, res, err))
         net().run(lambda: online.find_lyrics(artist, title, album, length),
                   lambda res, err: self._got_lyrics(gen, res, err))
 
@@ -245,7 +255,10 @@ class LookupDialog(QDialog):
         self._problems += problems
         self._pending -= 1
         if self._pending <= 0:
-            found = f"{len(self.candidates)} matches, {len(self.lyrics_found)} lyrics"
+            found = (f"Found on {len(self.lyrics_found)} sites" if self.lyrics_only else
+                     f"{len(self.candidates)} matches, {len(self.lyrics_found)} lyrics")
+            if self.lyrics_only and not self.lyrics_found:
+                found = "No lyrics found. Check the artist and title above and search again"
             if self._problems:
                 found += ".  Not reachable: " + "; ".join(self._problems)
             self.status.setText(found)

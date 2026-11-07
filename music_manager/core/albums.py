@@ -23,6 +23,30 @@ def _int(value: str) -> int:
     return int(m.group(0)) if m else 0
 
 
+def disc_number(value: str) -> int:
+    """"01" -> 1, "Disc 2" -> 2, and vinyl sides: "Side A" / "A" -> 1, "Side B" -> 2."""
+    n = _int(value)
+    if n:
+        return n
+    m = re.fullmatch(r"\s*(?:side\s*)?([A-Za-z])\s*", value or "", re.IGNORECASE)
+    return ord(m.group(1).upper()) - 64 if m else 0
+
+
+def _is_side(value: str) -> bool:
+    return bool(value) and not _int(value) and disc_number(value) > 0
+
+
+def same_text(value: str) -> str:
+    """For telling albums apart: case, accents, curly quotes, dashes and spaces don't count."""
+    import unicodedata
+
+    text = unicodedata.normalize("NFKD", value or "")
+    text = "".join(c for c in text if not unicodedata.combining(c)).casefold()
+    text = text.translate(str.maketrans({"’": "'", "‘": "'", "`": "'", "´": "'", "“": '"', "”": '"',
+                                         "–": "-", "—": "-", "…": "..."}))
+    return " ".join(text.split())
+
+
 def album_artist(t: Track) -> str:
     return (t.album_artist or t.artist or "").strip()
 
@@ -83,14 +107,15 @@ def _rating(tracks: list[Track]) -> float:
 
 def _side(t: Track, multi_disc: bool) -> str:
     parts = [t.edition.strip()] if t.edition.strip() else []
-    if multi_disc and _int(t.disc):
-        parts.append(f"Disc {_int(t.disc):02d}")
+    if multi_disc and disc_number(t.disc):
+        # A vinyl side is shown as it's written ("Side B"); a disc number as "Disc 01".
+        parts.append(t.disc.strip() if _is_side(t.disc) else f"Disc {disc_number(t.disc):02d}")
     return " • ".join(parts)
 
 
 def make_album(key: tuple, tracks: list[Track], sides: bool = True) -> Album:
-    tracks = sorted(tracks, key=lambda t: (_int(t.disc), _int(t.track), t.title.casefold(), t.name.casefold()))
-    discs = {_int(t.disc) for t in tracks if _int(t.disc)}
+    tracks = sorted(tracks, key=lambda t: (disc_number(t.disc), _int(t.track), t.title.casefold(), t.name.casefold()))
+    discs = {disc_number(t.disc) for t in tracks if disc_number(t.disc)}
     multi_disc = len(discs) > 1 or any(_int(t.disc_total) > 1 for t in tracks)
     groups: list[Group] = []
     for t in tracks:
@@ -117,13 +142,16 @@ def make_album(key: tuple, tracks: list[Track], sides: bool = True) -> Album:
 
 
 def build(tracks: list[Track], group_by: str = "artist", order: str = "year", sides: bool = True) -> list[Section]:
+    # One album = same album artist + same album name (ignoring case, accents and curly quotes);
+    # the Sort Artist only decides where it goes, so songs with and without one stay together.
     by_album: dict[tuple, list[Track]] = {}
     for t in tracks:
-        artist = album_artist(t)
-        sort = artist_sort_key(t.sort_artist or artist)
-        key = (sort, t.album.strip().casefold())
-        by_album.setdefault(key, []).append(t)
-    albums = [make_album(key, ts, sides) for key, ts in by_album.items()]
+        by_album.setdefault((same_text(album_artist(t)), same_text(t.album)), []).append(t)
+    albums = []
+    for (artist_key, album_key), ts in by_album.items():
+        sorts = Counter(t.sort_artist for t in ts if t.sort_artist)
+        sort = artist_sort_key(sorts.most_common(1)[0][0] if sorts else album_artist(ts[0]))
+        albums.append(make_album((sort, artist_key, album_key), ts, sides))
 
     def album_order(a: Album):  # type: ignore[no-untyped-def]
         within = (a.year or "9999", a.title.casefold()) if order == "year" else (a.title.casefold(), a.year)
@@ -133,13 +161,14 @@ def build(tracks: list[Track], group_by: str = "artist", order: str = "year", si
     if group_by == "none":
         return [Section("", albums)]
     sections: dict[str, list[Album]] = {}
+    names: dict[str, str] = {}
     for a in albums:
         if group_by == "genre":
             heading = a.genre or "(no genre)"
         elif group_by == "year":
             heading = a.year or "(no year)"
-        else:
-            heading = a.artist or "(no artist)"
+        else:  # one heading per artist, however its name is typed on each album
+            heading = names.setdefault(a.key[1], a.artist or "(no artist)")
         sections.setdefault(heading, []).append(a)
     if group_by == "artist":
         keys = sorted(sections, key=lambda h: (artist_sort_key(sections[h][0].key[0]), h.casefold()))

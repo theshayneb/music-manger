@@ -7,7 +7,7 @@ renames, converts, deletes or re-tags it, so Windows never says it's in use.
 from __future__ import annotations
 
 from PySide6.QtCore import Qt, QUrl, Signal
-from PySide6.QtWidgets import QHBoxLayout, QLabel, QPushButton, QSlider, QToolButton, QWidget
+from PySide6.QtWidgets import QHBoxLayout, QLabel, QSlider, QToolButton, QWidget
 
 from .model import fmt_time
 
@@ -40,14 +40,11 @@ class PlayerBar(QWidget):
                        (self.next_btn, "Next song")):
             b.setToolTip(tip)
             b.setAutoRaise(True)
-            b.setMinimumWidth(34)
+            b.setMinimumSize(56, 48)
+            font = b.font()
+            font.setPointSizeF(font.pointSizeF() * (2.6 if b is self.play_btn else 2.0))
+            b.setFont(font)
             layout.addWidget(b)
-        self.back_btn = QPushButton("−10s")
-        self.fwd_btn = QPushButton("+30s")
-        self.back_btn.setToolTip("Back 10 seconds (Ctrl+Left)")
-        self.fwd_btn.setToolTip("Forward 30 seconds (Ctrl+Right)")
-        layout.addWidget(self.back_btn)
-        layout.addWidget(self.fwd_btn)
         self.pos_label = QLabel("0:00")
         self.slider = QSlider(Qt.Orientation.Horizontal)
         self.slider.setRange(0, 0)
@@ -69,8 +66,6 @@ class PlayerBar(QWidget):
         self.prev_btn.clicked.connect(self.previous_requested)
         self.next_btn.clicked.connect(self.next_requested)
         self.play_btn.clicked.connect(self.toggle)
-        self.back_btn.clicked.connect(lambda: self.skip(-10))
-        self.fwd_btn.clicked.connect(lambda: self.skip(30))
         self.slider.sliderPressed.connect(lambda: setattr(self, "_seeking", True))
         self.slider.sliderReleased.connect(self._seek_released)
         self.slider.sliderMoved.connect(lambda v: self.pos_label.setText(fmt_time(v / 1000)))
