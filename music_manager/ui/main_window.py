@@ -44,6 +44,7 @@ from .dialogs import PlanDialog, SettingsDialog, ask_text
 from .editor import TagEditor
 from .jump import JumpBar, JumpTable, Typed, find
 from .lookup import LookupDialog, net
+from .lyrics_review import Found, LyricsReview
 from .model import COLUMN_KEYS, HIDDEN_BY_DEFAULT, PLEX_PLAYS, TrackFilter, TrackModel
 from .player import PlayerBar
 from .review import KeepReview
@@ -57,6 +58,7 @@ SHOW_FILTERS = [
     ("lyrics", "No lyrics"),
     ("gain", "Volume not measured"),
     ("low", "Low bitrate (under 192 kbps)"),
+    ("synced", "Lyrics with timestamps ([00:12.34] lines)"),
 ]
 SCAN_CHUNK = 150
 COLUMNS_STATE_KEY = "table3"
@@ -1037,14 +1039,15 @@ class MainWindow(QMainWindow):
             return
         without = [t for t in tracks if not t.has_lyrics]
         box = QMessageBox(QMessageBox.Icon.Question, "Find lyrics",
-                          f"Look up lyrics for these {len(tracks)} songs and save them straight away, in the file "
-                          f"and as the song's .txt?\n\n{len(without)} of them have no lyrics yet. LRCLIB is tried "
-                          "first, then lyrics.ovh and Genius.",
+                          f"Look up lyrics for these {len(tracks)} songs? You'll see what's found for each, next to "
+                          "what it has now, before anything is saved.\n\n"
+                          f"{len(without)} of them have no lyrics yet. LRCLIB is tried first, then lyrics.ovh "
+                          "and Genius.",
                           QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.Cancel, self)
         from PySide6.QtWidgets import QCheckBox
 
-        replace = QCheckBox(f"Also replace the lyrics the other {len(tracks) - len(without)} already have "
-                            "(in the file and their .txt)")
+        replace = QCheckBox(f"Also look up the other {len(tracks) - len(without)}, which have lyrics already "
+                            "(to replace them, e.g. timestamped ones)")
         replace.setChecked(not without)
         replace.setEnabled(len(without) < len(tracks))
         box.setCheckBox(replace)
@@ -1053,28 +1056,41 @@ class MainWindow(QMainWindow):
         missing = tracks if replace.isChecked() else without
         if not missing:
             return
-        state = self._release([t.path for t in missing])
-
-        def one(t: Track) -> bool:
+        # 1. Look them all up (nothing is saved yet)...
+        def look(t: Track) -> Found:
+            current = tags.read(t.path, with_details=True).lyrics
             found = online.best_lyrics(t.artist, t.title or os.path.splitext(t.name)[0], t.album, t.length)
-            if not found:
-                return False
-            tags.write(t.path, {"lyrics": found.text})
-            return True
+            return Found(t, current, found)
 
-        def finished(results, failures) -> None:  # type: ignore[no-untyped-def]
-            self._resume(state)
-            got = [t for t, ok in results if ok]
-            none = [t.name for t, ok in results if not ok]
-            self._report("Found lyrics for", len(got), failures, None)
-            if none:
-                QMessageBox.information(self, "Find lyrics", f"No lyrics were found for {len(none)} songs:\n\n"
-                                        + "\n".join(f"• {n}" for n in none[:20]) +
-                                        ("\n…" if len(none) > 20 else "") +
-                                        "\n\nTry them one at a time (the artist and title can be changed there).")
-            self._refresh_tracks({t.path: t.path for t in got})
+        def looked(results, failures) -> None:  # type: ignore[no-untyped-def]
+            items = [found for _t, found in results]
+            if failures:
+                self._report("Looked up lyrics for", len(items), failures, None)
+            if not items:
+                return
+            # 2. ...show what was found next to what each song has now, and save only the ticked ones.
+            review = LyricsReview(items, self)
+            if review.exec() != QDialog.DialogCode.Accepted:
+                self.flash("Nothing was saved.")
+                return
+            chosen = review.chosen()
+            if not chosen:
+                return
+            state = self._release([i.track.path for i in chosen])
 
-        self._run_each("Finding lyrics", missing, one, finished)
+            def save(item: Found) -> None:
+                tags.write(item.track.path, {"lyrics": item.text})
+
+            def saved(results, failures) -> None:  # type: ignore[no-untyped-def]
+                self._resume(state)
+                self._report("Saved lyrics for", len(results), failures, None)
+                self._mark_others_stale()
+                self._refresh_tracks({i.track.path: i.track.path for i, _r in results})
+                self.focus_list()
+
+            self._run_each("Saving lyrics", chosen, save, saved)
+
+        self._run_each("Looking up lyrics", missing, look, looked)
 
     def set_rating(self, paths: list[str], stars: int) -> None:
         paths = [p for p in paths if tags.can_write(p)]

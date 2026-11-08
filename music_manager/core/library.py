@@ -11,7 +11,7 @@ from pathlib import Path
 from . import tags
 from .settings import cache_dir
 
-CACHE_VERSION = 8  # ... 6: sort artist, 7: original artist/album/year, Obsidian tags, 8: album type
+CACHE_VERSION = 9  # ... 6: sort artist, 7: original artist/album/year, Obsidian tags, 8: album type
 
 
 def list_songs(folder: str, subfolders: bool) -> list[str]:
@@ -51,10 +51,13 @@ class TagCache:
             return tags.read_track(path)
         with self._lock:
             hit = self._items.get(key)
-        if hit and hit.get("size") == st.st_size and hit.get("mtime") == st.st_mtime and hit.get("path") == path:
-            track = tags.Track.from_dict(hit)
-            track.lyrics_file = os.path.exists(os.path.splitext(path)[0] + ".txt")
-            return track
+        try:  # a new or changed lyrics .txt means reading the song again
+            txt_mtime = os.stat(os.path.splitext(path)[0] + ".txt").st_mtime
+        except OSError:
+            txt_mtime = 0.0
+        if hit and hit.get("size") == st.st_size and hit.get("mtime") == st.st_mtime and hit.get("path") == path \
+                and hit.get("lyrics_txt_mtime", 0.0) == txt_mtime:
+            return tags.Track.from_dict(hit)
         track = tags.read_track(path)
         self.put(track)
         return track

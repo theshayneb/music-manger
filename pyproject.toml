@@ -1,6 +1,6 @@
 [project]
 name = "music-manager"
-version = "0.5.1"
+version = "0.5.2"
 description = "Review new music, fix its tags and keep it in a Plex-ready library (Windows)."
 requires-python = ">=3.11"
 dependencies = ["PySide6>=6.7,<7", "mutagen>=1.47", "send2trash>=1.8"]

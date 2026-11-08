@@ -228,6 +228,8 @@ class TrackFilter(QSortFilterProxyModel):
             return False
         if self.missing == "low" and (not t.bitrate or t.bitrate >= 192):
             return False
+        if self.missing == "synced" and not t.lyrics_synced:
+            return False
         if not self.words:
             return True
         hay = " ".join((t.title, t.artist, t.album, t.album_artist, t.genre, t.name)).lower()

@@ -238,3 +238,23 @@ def test_arrow_keys_in_the_album_view_only_stop_on_songs(app, song, tmp_path):
     wait(app, window, 1)
     assert [t.title for t in window.selected_tracks()] == ["B"]
     window.close()
+
+
+def test_lyrics_review_ticks_only_what_changes(app):
+    from music_manager.core.online import Lyrics
+    from music_manager.core.tags import Track
+    from music_manager.ui.lyrics_review import Found, LyricsReview, status
+
+    items = [Found(Track(path="a.mp3"), "", Lyrics("LRCLIB", "new words")),
+             Found(Track(path="b.mp3"), "[00:01.00] old\n[00:02.00] words", Lyrics("Genius", "plain words")),
+             Found(Track(path="c.mp3"), "same words", Lyrics("LRCLIB", "Same  words")),
+             Found(Track(path="d.mp3"), "", None)]
+    review = LyricsReview(items)
+    assert [i.use for i in items] == [True, True, False, False]
+    assert status(items[1]).startswith("↻ replaces timestamped") and status(items[3]) == "✗ nothing found"
+    review.songs.setCurrentRow(1)
+    review.found.setPlainText("plain words, fixed")
+    review.use.setChecked(False)
+    assert [(i.track.path, i.text) for i in review.chosen()] == [("a.mp3", "new words")]
+    review.use.setChecked(True)
+    assert [i.text for i in review.chosen()] == ["new words", "plain words, fixed"]

@@ -240,3 +240,13 @@ def test_new_lyrics_replace_an_existing_txt(song):
     tags.write(str(path), {"lyrics": "new words"})
     assert path.with_suffix(".txt").read_bytes() == b"new words\r\n"
     assert tags.read(str(path), with_details=True).lyrics == "new words"
+
+
+def test_timestamped_lyrics_are_spotted(song):
+    assert tags.is_synced("[00:12.34] Hello\n[00:15.00] it's me")
+    assert not tags.is_synced("[Verse 1]\nHello\n[Chorus]\nIt's me")
+    path = song("s.mp3")
+    path.with_suffix(".txt").write_text("[00:01.00] one\n[00:02.50] two\n", encoding="utf-8")
+    assert tags.read_track(str(path)).lyrics_synced
+    tags.write(str(path), {"lyrics": "one\ntwo"})
+    assert not tags.read_track(str(path)).lyrics_synced

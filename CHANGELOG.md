@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.5.2
+
+- **Find lyrics for several songs** now shows what it found for each song, next to the lyrics it has now, before
+  anything is saved: "+ new", "↻ replaces (timestamped) lyrics", "= same as now" or "✗ nothing found", and where
+  they came from. Untick any that aren't right, edit the found lyrics if needed, then **Save**. Its first question
+  can also include songs that already have lyrics (to replace timestamped ones, say).
+- **Show → Lyrics with timestamps**: songs whose lyrics (in the file or the .txt) have lines like `[00:12.34]`,
+  or a separate synced-lyrics tag. Lines like `[Verse 1]` or `[Chorus]` don't count.
+- A changed lyrics .txt (edited elsewhere) is noticed and read again.
+
 ## 0.5.1
 
 - The Tags panel has two tabs: **Standard tags** (Title, Artist, Album Artist, Album, Year, Genre, Language,

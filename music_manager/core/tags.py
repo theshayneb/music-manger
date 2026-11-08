@@ -119,6 +119,8 @@ class Track:
     has_cover: bool = False
     lyrics_in_file: bool = False
     lyrics_file: bool = False
+    lyrics_synced: bool = False  # the lyrics have timestamps ("[00:12.34] line"): LRC-style synced lyrics
+    lyrics_txt_mtime: float = 0.0  # when the .txt was last changed (so the cache notices new lyrics)
     gain: str = ""          # ReplayGain track gain, e.g. "-6.20 dB"
     real_format: str = ""   # set when the file isn't what its name says (e.g. "M4A" named .mp3)
     length: float = 0.0     # seconds
@@ -287,11 +289,28 @@ def read(path: str, with_details: bool = False) -> Details:
             _read_other(details)
     except Exception as exc:  # noqa: BLE001 - a broken file mustn't stop the list loading
         track.error = str(exc) or exc.__class__.__name__
+    # Synced (timestamped) lyrics, in the file or in the .txt, or a separate synced-lyrics frame (SYLT).
+    txt = sidecar.read_lyrics(path) if track.lyrics_file else ""
+    if track.lyrics_file:
+        try:
+            track.lyrics_txt_mtime = os.stat(sidecar.lyrics_path(path)).st_mtime
+        except OSError:
+            pass
+    track.lyrics_synced = track.lyrics_synced or is_synced(details.lyrics) or is_synced(txt)
     if with_details and not details.lyrics and track.lyrics_file:
-        details.lyrics = sidecar.read_lyrics(path)
+        details.lyrics = txt
     if not with_details:
         details.lyrics, details.cover = "", None
     return details
+
+
+_TIMESTAMP_LINE = re.compile(r"^\s*\[\d{1,3}:\d{2}(?:[.:]\d{1,3})?\]", re.MULTILINE)
+
+
+def is_synced(lyrics: str) -> bool:
+    """Timestamped (LRC) lyrics: at least two lines starting like "[01:23.45]". Lines like "[Verse 1]" or
+    "[Chorus]" (as Genius writes them) don't count."""
+    return len(_TIMESTAMP_LINE.findall(lyrics or "")) >= 2
 
 
 def read_track(path: str) -> Track:
@@ -339,6 +358,7 @@ def _read_mp3(d: Details) -> None:
         chosen = next((p for p in popms if p.email == POPM_EMAIL), popms[0])
         t.rating = popm_to_stars(int(chosen.rating))
     t.has_cover = bool(tags.getall("APIC"))
+    t.lyrics_synced = bool(tags.getall("SYLT"))
     uslt = tags.getall("USLT")
     t.lyrics_in_file = any(str(u.text).strip() for u in uslt)
     t.language = _first(tags.get("TLAN"))
