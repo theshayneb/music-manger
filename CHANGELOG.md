@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.5.3
+
+- **Narrower Tags panel** (layout A): a 150 px cover with small icon buttons beside it (from file, copy, paste,
+  remove, save as), Disc # on its own line, smaller star buttons. The panel can now be dragged down to about
+  290 px wide without cutting anything off.
+- Three tabs: **Standard**, **Extra** and **Other**. Other lists every tag in the file this app has no box for
+  (with how many in the tab name). **Double-click a value to change it**, or **✕** to delete the tag; both happen
+  when you Save. Pictures, IDs and counters can be deleted but not edited.
+
 ## 0.5.2
 
 - **Find lyrics for several songs** now shows what it found for each song, next to the lyrics it has now, before

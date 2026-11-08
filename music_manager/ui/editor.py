@@ -32,7 +32,7 @@ from ..core import tags
 from ..core.tags import Details, Track
 
 MIXED = "(mixed)"
-COVER_SIZE = 220
+COVER_SIZE = 150
 
 
 class RatingStars(QWidget):
@@ -50,7 +50,8 @@ class RatingStars(QWidget):
             b = QToolButton(text="☆")
             b.setAutoRaise(True)
             b.setToolTip(f"{n} star{'s' if n > 1 else ''} (Ctrl+{n}). Click again to clear.")
-            b.setStyleSheet("QToolButton { font-size: 16px; color: #f2b01e; }")
+            b.setStyleSheet("QToolButton { font-size: 16px; color: #f2b01e; padding: 0px; }")
+            b.setFixedWidth(24)
             b.clicked.connect(lambda _=False, n=n: self._click(n))
             layout.addWidget(b)
             self.buttons.append(b)
@@ -177,23 +178,33 @@ class TagEditor(QWidget):
         self.cover.setFixedSize(COVER_SIZE, COVER_SIZE)
         self.cover.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.cover.setStyleSheet("QLabel { border: 1px solid palette(mid); }")
-        outer.addWidget(self.cover, 0, Qt.AlignmentFlag.AlignHCenter)
+        # Option A: the cover with small icon buttons beside it.
+        cover_row = QHBoxLayout()
+        cover_row.addStretch(1)
+        cover_row.addWidget(self.cover)
+        art_buttons = QVBoxLayout()
+        art_buttons.setSpacing(2)
+        cover_row.addLayout(art_buttons)
+        cover_row.addStretch(1)
+        outer.addLayout(cover_row)
         self.cover_info = QLabel("")
         self.cover_info.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.cover_info.setStyleSheet("color: palette(placeholder-text);")
         outer.addWidget(self.cover_info)
         self.cover_info.hide()
-        art = QHBoxLayout()
-        self.art_file = QPushButton("From file…")
-        self.art_paste = QPushButton("Paste")
-        self.art_remove = QPushButton("Remove")
-        self.art_save = QPushButton("Save as…")
-        self.art_copy = QPushButton("Copy")
-        self.art_copy.setToolTip("Copy this album art, to Paste it into another song (the picture is kept exactly)")
-        self.art_paste.setToolTip("Paste a picture: one copied here, or with Copy image in a web browser")
-        for b in (self.art_file, self.art_copy, self.art_paste, self.art_remove, self.art_save):
-            art.addWidget(b)
-        outer.addLayout(art)
+        def art_button(icon: str, tip: str) -> QToolButton:
+            b = QToolButton(text=icon)
+            b.setToolTip(tip)
+            b.setFixedSize(30, 28)
+            art_buttons.addWidget(b)
+            return b
+
+        self.art_file = art_button("📂", "Album art from a file…")
+        self.art_copy = art_button("⧉", "Copy this album art, to Paste it into another song (kept exactly)")
+        self.art_paste = art_button("📋", "Paste a picture: one copied here, or with Copy image in a web browser")
+        self.art_remove = art_button("✕", "Remove the album art")
+        self.art_save = art_button("💾", "Save the album art as a picture file…")
+        art_buttons.addStretch(1)
 
         # Two tabs, so the panel stays short: the tags every song needs, and the extra ones.
         self.tag_tabs = QTabWidget()
@@ -234,16 +245,38 @@ class TagEditor(QWidget):
         nums.addWidget(self.edits["track"], 0, 0)
         nums.addWidget(QLabel("of"), 0, 1)
         nums.addWidget(self.edits["track_total"], 0, 2)
-        nums.addWidget(QLabel("   Disc"), 0, 3)
-        nums.addWidget(self.edits["disc"], 0, 4)
-        nums.addWidget(QLabel("of"), 0, 5)
-        nums.addWidget(self.edits["disc_total"], 0, 6)
-        nums.setColumnStretch(7, 1)
+        nums.setColumnStretch(3, 1)
         form.addRow("Track #", nums)
+        discs = QGridLayout()
+        discs.addWidget(self.edits["disc"], 0, 0)
+        discs.addWidget(QLabel("of"), 0, 1)
+        discs.addWidget(self.edits["disc_total"], 0, 2)
+        discs.setColumnStretch(3, 1)
+        form.addRow("Disc #", discs)
         self.rating = RatingStars()
         form.addRow("Rating", self.rating)
-        self.tag_tabs.addTab(standard, "Standard tags")
-        self.tag_tabs.addTab(extra, "Extra tags")
+        self.tag_tabs.addTab(standard, "Standard")
+        self.tag_tabs.addTab(extra, "Extra")
+        other = QWidget()
+        other_box = QVBoxLayout(other)
+        other_box.setContentsMargins(6, 6, 6, 6)
+        self.extra_title = QLabel("Other tags in this file (✕ deletes one when you Save)")
+        self.extra_title.setWordWrap(True)
+        other_box.addWidget(self.extra_title)
+        self.extra = QTableWidget(0, 3)
+        self.extra.setHorizontalHeaderLabels(["Tag", "Value", ""])
+        self.extra.verticalHeader().setVisible(False)
+        self.extra.setEditTriggers(QTableWidget.EditTrigger.DoubleClicked | QTableWidget.EditTrigger.EditKeyPressed)
+        self.extra.itemChanged.connect(self._frame_edited)
+        self.extra.setWordWrap(False)
+        self.extra.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeMode.Interactive)
+        self.extra.horizontalHeader().resizeSection(0, 110)
+        self.extra.horizontalHeader().setSectionResizeMode(1, QHeaderView.ResizeMode.Stretch)
+        self.extra.horizontalHeader().setSectionResizeMode(2, QHeaderView.ResizeMode.Fixed)
+        self.extra.horizontalHeader().resizeSection(2, 30)
+        self.extra.setMinimumHeight(220)
+        other_box.addWidget(self.extra)
+        self.tag_tabs.addTab(other, "Other")
         outer.addWidget(self.tag_tabs)
         lookups = QHBoxLayout()
         self.lookup_btn = QPushButton("🔎 Look up online")
@@ -264,20 +297,6 @@ class TagEditor(QWidget):
         self.lyrics.setPlaceholderText("Paste lyrics here")
         self.lyrics.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
         outer.addWidget(self.lyrics, 1)
-        self.extra_title = QLabel("Other tags in this file (✕ deletes one when you Save)")
-        outer.addWidget(self.extra_title)
-        self.extra = QTableWidget(0, 3)
-        self.extra.setHorizontalHeaderLabels(["Tag", "Value", ""])
-        self.extra.verticalHeader().setVisible(False)
-        self.extra.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
-        self.extra.setWordWrap(False)
-        self.extra.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeMode.ResizeToContents)
-        self.extra.horizontalHeader().setSectionResizeMode(1, QHeaderView.ResizeMode.Stretch)
-        self.extra.horizontalHeader().setSectionResizeMode(2, QHeaderView.ResizeMode.Fixed)
-        self.extra.horizontalHeader().resizeSection(2, 30)
-        self.extra.setMinimumHeight(90)
-        self.extra.setMaximumHeight(220)
-        outer.addWidget(self.extra)
 
         buttons = QHBoxLayout()
         self.status = QLabel("")
@@ -501,12 +520,21 @@ class TagEditor(QWidget):
             self._edited(key, value)
 
     def _show_frames(self, frames: list[tuple[str, str, str]], many: bool) -> None:
+        self._loading_frames = True
         self.extra.setRowCount(len(frames))
+        self._frame_keys = [key for key, _n, _v in frames]
         for r, (key, name, value) in enumerate(frames):
             name_item = QTableWidgetItem(name)
             name_item.setToolTip(key)
+            name_item.setFlags(Qt.ItemFlag.ItemIsEnabled | Qt.ItemFlag.ItemIsSelectable)
             value_item = QTableWidgetItem(value)
-            value_item.setToolTip(value)
+            editable = tags.frame_is_text(key)
+            hint = "Double-click to change it" if editable else "(can't be edited here)"
+            value_item.setToolTip(f"{value}\n\n{hint}")
+            flags = Qt.ItemFlag.ItemIsEnabled | Qt.ItemFlag.ItemIsSelectable
+            value_item.setFlags(flags | Qt.ItemFlag.ItemIsEditable if editable else flags)
+            if not editable:
+                value_item.setForeground(self.palette().placeholderText())
             self.extra.setItem(r, 0, name_item)
             self.extra.setItem(r, 1, value_item)
             button = QToolButton(text="✕")
@@ -515,9 +543,24 @@ class TagEditor(QWidget):
             button.clicked.connect(lambda _=False, key=key, r=r: self._remove_frame(key, r))
             self.extra.setCellWidget(r, 2, button)
         self.extra.resizeRowsToContents()
-        self.extra_title.setText("Other tags in this file (✕ deletes one when you Save)" if frames else
-                                 ("Select one song to see its other tags" if many else "No other tags in this file"))
+        self.extra_title.setText("Double-click a value to change it; ✕ deletes the tag. Both happen when you Save."
+                                 if frames else ("Select one song to see its other tags" if many
+                                                 else "No other tags in this file"))
         self.extra.setVisible(bool(frames))
+        self.tag_tabs.setTabText(2, f"Other ({len(frames)})" if frames else "Other")
+        self._loading_frames = False
+
+    def _frame_edited(self, item: QTableWidgetItem) -> None:
+        if getattr(self, "_loading_frames", False) or item.column() != 1:
+            return
+        key = self._frame_keys[item.row()]
+        self.changed.setdefault("set_frames", {})[key] = item.text()
+        font = item.font()
+        font.setItalic(True)  # changed, not saved yet
+        self._loading_frames = True
+        item.setFont(font)
+        self._loading_frames = False
+        self._mark()
 
     def _remove_frame(self, key: str, row: int) -> None:
         removing = self.changed.setdefault("remove", [])

@@ -488,6 +488,20 @@ MANAGED_VORBIS = {"title", "artist", "albumartist", "album artist", "album_artis
                   "releasetype", "musicbrainz_albumtype"}
 
 
+def frame_is_text(key: str) -> bool:
+    """Whether an "Other tags" entry holds text that can be edited (not pictures, IDs or counters)."""
+    if key.startswith(("vorbis:", "TXXX:", "COMM:")):
+        return True
+    fid = key.split(":", 1)[0]
+    return len(fid) == 4 and fid.startswith("T")
+
+
+def _set_frame_text(frame, value: str) -> None:  # type: ignore[no-untyped-def]
+    values = [v.strip() for v in value.split(" / ")] if " / " in value else [value]
+    frame.text = [v for v in values if v] or [""]
+    frame.encoding = 1  # UTF-16, so any character can be saved
+
+
 def _frame_text(frame) -> str:  # type: ignore[no-untyped-def]
     text = getattr(frame, "text", None)
     if text is not None and not isinstance(text, (bytes, bytearray)):
@@ -751,6 +765,12 @@ def _write_mp3(path: str, c: dict) -> None:
             tags.add(COMM(encoding=1, lang="eng", desc="", text=[c["comment"]]))
     # mutagen keeps tags as v2.4 in memory; convert v2.4-only frames (e.g. the year, TDRC -> TYER)
     # or the v2.3 file would contain frames that v2.3 readers don't know.
+    for key, value in c.get("set_frames", {}).items():
+        if key in tags and frame_is_text(key) and hasattr(tags[key], "text"):
+            if value.strip():
+                _set_frame_text(tags[key], value)
+            else:
+                del tags[key]  # emptied: no tag
     for key in c.get("remove", []):
         if key in tags:
             del tags[key]
@@ -824,6 +844,12 @@ def _write_flac(path: str, c: dict) -> None:
             pic = Picture()
             pic.type, pic.mime, pic.data = 3, mime, data
             audio.add_picture(pic)
+    for key, value in c.get("set_frames", {}).items():
+        name = key.split(":", 1)[1] if key.startswith("vorbis:") else key
+        if value.strip():
+            tags[name] = [v.strip() for v in value.split(";") if v.strip()]
+        elif name in tags:
+            del tags[name]
     for key in c.get("remove", []):
         name = key.split(":", 1)[1] if key.startswith("vorbis:") else key
         if name in tags:

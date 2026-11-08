@@ -250,3 +250,21 @@ def test_timestamped_lyrics_are_spotted(song):
     assert tags.read_track(str(path)).lyrics_synced
     tags.write(str(path), {"lyrics": "one\ntwo"})
     assert not tags.read_track(str(path)).lyrics_synced
+
+
+def test_other_tags_can_be_edited(song):
+    from mutagen.id3 import COMM, PRIV, TXXX
+
+    path = str(song("e.mp3"))
+    id3 = ID3()
+    id3.add(COMM(encoding=0, lang="eng", desc="Songs-DB_Preference", text=["Emotional"]))
+    id3.add(TXXX(encoding=0, desc="CATALOGNUMBER", text=["ABC-1"]))
+    id3.add(PRIV(owner="WM/MediaClassPrimaryID", data=b"\x01\x02"))
+    id3.save(path, v2_version=3)
+    frames = {name: key for key, name, _v in tags.read(path, with_details=True).frames}
+    assert tags.frame_is_text(frames["Preference (MusicBee)"]) and tags.frame_is_text(frames["CATALOGNUMBER"])
+    assert not tags.frame_is_text(frames["Private data"])
+    tags.write(path, {"set_frames": {frames["Preference (MusicBee)"]: "Happy – upbeat",
+                                     frames["CATALOGNUMBER"]: ""}})
+    values = {name: value for _k, name, value in tags.read(path, with_details=True).frames}
+    assert values["Preference (MusicBee)"] == "Happy – upbeat" and "CATALOGNUMBER" not in values
