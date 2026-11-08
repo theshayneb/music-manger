@@ -1038,25 +1038,9 @@ class MainWindow(QMainWindow):
                 self.save_tags([track.path], {"lyrics": dialog.chosen_lyrics})
             self.focus_list()
             return
-        without = [t for t in tracks if not t.has_lyrics]
-        box = QMessageBox(QMessageBox.Icon.Question, "Find lyrics",
-                          f"Look up lyrics for these {len(tracks)} songs? You'll see what's found for each, next to "
-                          "what it has now, before anything is saved.\n\n"
-                          f"{len(without)} of them have no lyrics yet. LRCLIB is tried first, then lyrics.ovh "
-                          "and Genius.",
-                          QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.Cancel, self)
-        from PySide6.QtWidgets import QCheckBox
+        # No question first: every selected song is looked up, and nothing is saved until the review.
+        missing = tracks
 
-        replace = QCheckBox(f"Also look up the other {len(tracks) - len(without)}, which have lyrics already "
-                            "(to replace them, e.g. timestamped ones)")
-        replace.setChecked(not without)
-        replace.setEnabled(len(without) < len(tracks))
-        box.setCheckBox(replace)
-        if box.exec() != QMessageBox.StandardButton.Yes:
-            return
-        missing = tracks if replace.isChecked() else without
-        if not missing:
-            return
         # 1. Look them all up (nothing is saved yet)...
         def look(t: Track) -> Found:
             current = tags.read(t.path, with_details=True).lyrics

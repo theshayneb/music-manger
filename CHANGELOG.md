@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.5.4
+
+- Find lyrics for several songs no longer asks first: it looks up every selected song (with or without lyrics)
+  and goes straight to the review, where nothing is saved until you click Save. Songs whose lyrics are the same
+  as what's found start unticked.
+
 ## 0.5.3
 
 - **Narrower Tags panel** (layout A): a 150 px cover with small icon buttons beside it (from file, copy, paste,
