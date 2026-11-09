@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.7.2
+
+- The Tags panel's tabs are only as tall as the tab that's open (no empty space under Rating).
+- The title, artist, rating and plays under the album art are gone (they're in the Tags panel and the song list).
+
 ## 0.7.1
 
 - The **album art and its five buttons** (from file, copy, paste, remove, save as) **moved out of the Tags panel**

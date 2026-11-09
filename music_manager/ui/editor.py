@@ -274,10 +274,13 @@ class TagEditor(QWidget):
         self.extra.horizontalHeader().setSectionResizeMode(1, QHeaderView.ResizeMode.Stretch)
         self.extra.horizontalHeader().setSectionResizeMode(2, QHeaderView.ResizeMode.Fixed)
         self.extra.horizontalHeader().resizeSection(2, 30)
-        self.extra.setMinimumHeight(220)
+        self.extra.setMinimumHeight(160)
         other_box.addWidget(self.extra)
         self.tag_tabs.addTab(other, "Other")
         outer.addWidget(self.tag_tabs)
+        # A tab panel is as tall as its tallest page; make it only as tall as the page that's open.
+        self.tag_tabs.currentChanged.connect(self._fit_tabs)
+        self._fit_tabs(0)
         lookups = QHBoxLayout()
         self.lookup_btn = QPushButton("🔎 Look up online")
         self.lookup_btn.setToolTip("Tags, album art and lyrics from iTunes, MusicBrainz, Deezer and more (Ctrl+L)")
@@ -440,6 +443,14 @@ class TagEditor(QWidget):
         if len(tracks) > 1 and not new:
             info = f"{sum(t.has_cover for t in tracks)} of {len(tracks)} songs have art"
         self._cover_note(info)
+
+    def _fit_tabs(self, index: int) -> None:
+        for i in range(self.tag_tabs.count()):
+            policy = QSizePolicy.Policy.Preferred if i == index else QSizePolicy.Policy.Ignored
+            self.tag_tabs.widget(i).setSizePolicy(policy, policy)
+        self.tag_tabs.widget(index).adjustSize()
+        self.tag_tabs.adjustSize()
+        self.tag_tabs.updateGeometry()
 
     def preview_cover(self, pixmap: QPixmap | None) -> None:
         """With no song selected: the playing song's art, just to look at (the buttons stay off)."""

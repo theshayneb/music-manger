@@ -78,6 +78,7 @@ class NowCard(QWidget):
         self.text.setWordWrap(True)
         self.text.setTextFormat(Qt.TextFormat.RichText)
         self.box.addWidget(self.text)
+        self.text.hide()  # the title, artist, rating... are in the Tags panel and the song list already
         self.path = ""
         self.playing = False
 
