@@ -235,6 +235,8 @@ class TrackFilter(QSortFilterProxyModel):
             return False
         if self.missing == "synced" and not t.lyrics_synced:
             return False
+        if self.missing == "notmp3" and t.path.lower().endswith(".mp3"):
+            return False
         if not self.words:
             return True
         hay = " ".join((t.title, t.artist, t.album, t.album_artist, t.genre, t.name)).lower()

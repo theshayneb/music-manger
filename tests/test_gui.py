@@ -327,3 +327,31 @@ def test_obsidian_tag_chips(app, song):
     # Several separate values in the file: Media Manager reads them as a list for the note's tags.
     frame = ID3(str(path))["TXXX:Obsidian Tags"]
     assert frame.text == ["Feminism", "holiday", "atheism"]
+
+
+@needs_ffmpeg
+def test_folders_panel_card_and_checkup(app, song, tmp_path):
+    from music_manager.ui.main_window import MainWindow
+
+    from .conftest import PNG
+
+    a = song("music/X - A.mp3", seconds=1)
+    b = song("music/X - B.mp3", seconds=1)
+    song("dl/new.flac", seconds=1)
+    tags.write(str(a), {"title": "A", "artist": "X", "album": "One", "year": "2001", "cover": (PNG, "image/png"),
+                        "lyrics": "[00:01.00] la\n[00:02.00] la"})
+    tags.write(str(b), {"title": "B", "artist": "X"})
+    window = MainWindow(Settings(library_folder=str(tmp_path / "music"), review_folder=str(tmp_path / "dl"),
+                                 last_view="library", view_modes={"library": "list"}), FFMPEG)
+    window.show()
+    wait(app, window, 5, until=lambda: window.checkup.numbers["songs"].text() == "2")
+    n = {k: v.text() for k, v in window.checkup.numbers.items()}
+    assert (n["songs"], n["cover"], n["lyrics"], n["synced"], n["tags"]) == ("2", "1", "1", "1", "1")
+    window._select_path(str(a))
+    wait(app, window, 2, until=lambda: window.now_card.cover.pixmap() is not None
+         and not window.now_card.cover.pixmap().isNull())
+    assert window.now_card.heading.text() == "SELECTED" and "A" in window.now_card.text.text()
+    window._open_check("library", "cover")
+    wait(app, window, 1)
+    assert window.show_filter.currentData() == "cover" and window.proxy.rowCount() == 1
+    window.close()

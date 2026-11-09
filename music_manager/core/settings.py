@@ -57,6 +57,7 @@ class Settings:
     last_view: str = "review"
     view_modes: dict[str, str] = field(default_factory=lambda: {"review": "list", "library": "albums"})
     album_layout: dict = field(default_factory=dict)
+    kept_log: list[float] = field(default_factory=list)  # when songs were kept (for "Kept this week")
     album_columns: list[dict] = field(default_factory=list)  # [{"key", "width", "hidden"}] in order
     extra_folders: list[dict] = field(default_factory=list)   # [{"path", "label", "subfolders"}]
     saved_searches: list[dict] = field(default_factory=list)  # [{"label", "source", "search", "missing"}]

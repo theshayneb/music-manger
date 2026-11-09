@@ -5,6 +5,7 @@ from __future__ import annotations
 import os
 import subprocess
 import sys
+import time
 from typing import Callable
 
 from PySide6.QtCore import QByteArray, QItemSelectionModel, Qt, QTimer, QUrl
@@ -48,6 +49,7 @@ from .lyrics_review import Found, LyricsReview
 from .model import COLUMN_KEYS, HIDDEN_BY_DEFAULT, PLEX_PLAYS, TrackFilter, TrackModel, stars
 from .player import PlayerBar
 from .review import KeepReview
+from .sidebar import CheckUp, NowCard, counts_for, inside, kept_this_week
 from .theme import apply_theme
 from .workers import Background
 
@@ -59,6 +61,7 @@ SHOW_FILTERS = [
     ("gain", "Volume not measured"),
     ("low", "Low bitrate (under 192 kbps)"),
     ("synced", "Lyrics with timestamps ([00:12.34] lines)"),
+    ("notmp3", "Not MP3 (to convert)"),
 ]
 SCAN_CHUNK = 150
 COLUMNS_STATE_KEY = "table3"
@@ -129,6 +132,12 @@ class MainWindow(QMainWindow):
         lv.addWidget(self.views)
         lv.addWidget(self.add_view_btn)
         lv.addWidget(self.view_hint)
+        # Under the folders: the cover of the song playing (or selected), then the Library check-up.
+        self.now_card = NowCard()
+        lv.addWidget(self.now_card)
+        self.checkup = CheckUp()
+        self.checkup.picked.connect(self._open_check)
+        lv.addWidget(self.checkup)
         lv.addStretch(1)
         left.setMaximumWidth(220)
         # A panel you can drag to any edge of the window (or float); on the top or bottom edge
@@ -249,6 +258,8 @@ class MainWindow(QMainWindow):
         self.player.previous_requested.connect(lambda: self.play_relative(-1))
         self.player.play_requested.connect(self.play_selected)
         self.player.finished.connect(self._song_finished)
+        if self.player.player is not None:  # the card follows playing / stopping
+            self.player.player.playbackStateChanged.connect(lambda _s: self._update_now())
         self.proxy.rowsInserted.connect(lambda *_: self._update_count())
         self.proxy.rowsRemoved.connect(lambda *_: self._update_count())
         self.proxy.modelReset.connect(self._update_count)
@@ -427,12 +438,16 @@ class MainWindow(QMainWindow):
             self.views.setFixedHeight(self.views.sizeHintForRow(0) + 8)
             self.views.setMaximumWidth(260)
             self.view_hint.hide()
+            self.now_card.hide()
+            self.checkup.hide()
             self._folders_left.setMaximumWidth(16777215)
             self._folders_left.layout().setDirection(QVBoxLayout.Direction.LeftToRight)
         else:
             self.views.setFixedHeight(min(10, self.views.count()) * max(28, self.views.sizeHintForRow(0)) + 8)
             self.views.setMaximumWidth(220)
             self.view_hint.show()
+            self.now_card.show()
+            self.checkup.show()
             self._folders_left.setMaximumWidth(220)
             self._folders_left.layout().setDirection(QVBoxLayout.Direction.TopToBottom)
 
@@ -520,6 +535,64 @@ class MainWindow(QMainWindow):
 
         net().run(lambda: client.refresh_folder(folder), done)
 
+    # ================================================================ under the folders
+    def _update_now(self) -> None:
+        """The card shows the song playing; when nothing plays, the selected one."""
+        playing = bool(self.player.path)
+        track = None
+        if playing:
+            row = self.model.row_of(self.player.path)
+            track = self.model.tracks[row] if row >= 0 else self.cache.get(self.player.path)
+        else:
+            selected = self.selected_tracks()
+            track = selected[0] if selected else None
+        if track is not None and self.now_card.path == track.path and self.now_card.heading.text() == (
+                "NOW PLAYING" if playing else "SELECTED"):
+            return  # already showing it
+        self.now_card.show_track(track, playing)
+        if track is None or not track.has_cover:
+            return
+        path = track.path
+
+        def done(image, _err) -> None:  # type: ignore[no-untyped-def]
+            from PySide6.QtGui import QPixmap
+
+            self.now_card.set_cover(path, QPixmap.fromImage(image) if image is not None else None)
+
+        self.cover_bg.run(lambda: thumbnail(path, 400), done)
+
+    def _update_checkup(self) -> None:
+        """Recount the Library check-up (in the background, from the tag cache plus what's shown)."""
+        library, review = self.settings.library_folder, self.settings.review_folder
+        shown = {os.path.normcase(t.path): t for t in self.model.tracks}
+        with self.cache._lock:  # a scan may be adding to it
+            items = list(self.cache._items.values())
+        cached = [Track.from_dict(v) for v in items]
+
+        def work() -> dict[str, int]:
+            songs = {os.path.normcase(t.path): t for t in cached if os.path.exists(t.path)}
+            songs.update(shown)
+            in_library = [t for t in songs.values() if inside(t.path, library)]
+            in_review = [t for t in songs.values() if inside(t.path, review)]
+            return counts_for(in_library, in_review)
+
+        def done(counts, _err) -> None:  # type: ignore[no-untyped-def]
+            if counts:
+                self.checkup.set_counts(counts, kept_this_week(self.settings.kept_log))
+
+        self.scan_bg.run(work, done)
+
+    def _open_check(self, view: str, show: str) -> None:
+        """A check-up line was clicked: show those songs."""
+        if self.view != view:
+            self._select_view_item(view)
+
+        def apply() -> None:
+            self.search.clear()
+            self.show_filter.setCurrentIndex(max(0, self.show_filter.findData(show)))
+
+        QTimer.singleShot(0, apply)
+
     def _start(self) -> None:
         self._folders_moved(self.dockWidgetArea(self.folders_dock))
         self._restore_album_columns()
@@ -528,6 +601,7 @@ class MainWindow(QMainWindow):
         if self.view_def(self.view) is None:
             self.view = "review"
         self._select_view_item(self.view)
+        QTimer.singleShot(500, self._update_checkup)
         if not self.ffmpeg:
             self.flash("ffmpeg wasn't found: converting to MP3 and measuring volume won't work.")
 
@@ -802,6 +876,7 @@ class MainWindow(QMainWindow):
                 self.status.setText("")
                 self.scan_bg.run(self.cache.save)
                 self._update_choices()
+                self._update_checkup()
                 if self._pending_position:
                     pending = self._pending_position
                     self._pending_position = {}
@@ -907,6 +982,7 @@ class MainWindow(QMainWindow):
             if not self._confirm_unsaved():
                 return
         self._load_details(tracks)
+        self._update_now()
 
     def _load_details(self, tracks: list[Track]) -> None:
         self._details_gen += 1
@@ -1012,6 +1088,7 @@ class MainWindow(QMainWindow):
             if selected and any(t.path in mapping.values() for t in selected):
                 self._load_details(selected)
             self.bg.run(self.cache.save)
+            self._update_checkup()
 
         self.bg.run(read, done)
 
@@ -1199,6 +1276,8 @@ class MainWindow(QMainWindow):
 
     def _after_keep(self, results: list, failures: list, next_row: str | None, playing: bool) -> None:
         kept = [item[0].path for item, _res in results]
+        now = time.time()
+        self.settings.kept_log = [t for t in self.settings.kept_log if t > now - 30 * 86400] + [now] * len(kept)
         warnings = [w for _item, (_dest, ws) in results for w in ws]
         for p in kept:
             self.cache.forget(p)
@@ -1234,6 +1313,7 @@ class MainWindow(QMainWindow):
                 self.cache.forget(p)
             self.model.remove(gone)
             self._mark_others_stale()
+            self._update_checkup()
             self._report("Deleted", len(gone), failures, error)
             self._after_removal(next_row, playing)
 

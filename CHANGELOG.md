@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.7.0
+
+- Under the Folders list:
+  - **The album art of the song playing**, or of the selected song when nothing plays, with its title, artist,
+    album, year, rating, plays and length.
+  - **Library check-up**: how many Library songs have no album art, no lyrics, timestamped lyrics, missing tags,
+    no volume measurement or a low bitrate, plus how many songs wait in Review and how many of those aren't MP3s,
+    and how many songs you kept this week. Click a line to show those songs. The numbers update as you work.
+- Show filter **Not MP3 (to convert)**.
+
 ## 0.6.2
 
 - Easier-to-read Obsidian tag chips (style A): brighter text on a filled pill, a slightly bigger font and more
