@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.7.4
+
+- Fixed: 0.7.3 made the Tags panel's tab area darker (its tabs were drawn by the app instead of by Qt). They're
+  Qt's normal tabs again, with the same lighter grey as before; each tab still only as tall as what's in it.
+
 ## 0.7.3
 
 - Fixed: a gap under Rating in the Standard tab. The Obsidian tag chips in the Extra tab set the height of every

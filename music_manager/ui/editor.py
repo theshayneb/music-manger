@@ -12,7 +12,6 @@ from PySide6.QtWidgets import (
     QComboBox,
     QFileDialog,
     QFormLayout,
-    QFrame,
     QGridLayout,
     QHBoxLayout,
     QHeaderView,
@@ -21,9 +20,10 @@ from PySide6.QtWidgets import (
     QPlainTextEdit,
     QPushButton,
     QSizePolicy,
-    QTabBar,
+    QStyle,
     QTableWidget,
     QTableWidgetItem,
+    QTabWidget,
     QToolButton,
     QVBoxLayout,
     QWidget,
@@ -134,56 +134,41 @@ CHOICE_FIELDS = ("genre", "language", "tempo", "album_type")
 COVER_MIME = "application/x-music-manager-cover"
 
 
-class TabPages(QWidget):
-    """Tabs whose height is the open page's (a QTabWidget is as tall as its tallest page, and pages
-    that wrap, like the Obsidian tag chips, made the Standard tab too tall). Only the open page is
-    in the layout; the others are hidden."""
-
-    currentChanged = Signal(int)
+class TabPages(QTabWidget):
+    """Qt's normal tabs (same look as always), but as tall as the open page only: a plain QTabWidget
+    is as tall as its tallest page, and the Obsidian tag chips made the Standard tab too tall."""
 
     def __init__(self, parent: QWidget | None = None):
         super().__init__(parent)
-        box = QVBoxLayout(self)
-        box.setContentsMargins(0, 0, 0, 0)
-        box.setSpacing(0)
-        self.bar = QTabBar()
-        self.bar.setDrawBase(False)
-        self.bar.setExpanding(False)
-        box.addWidget(self.bar)
-        self.frame = QFrame()
-        self.frame.setObjectName("tabframe")
-        self.frame.setStyleSheet("QFrame#tabframe { border: 1px solid palette(mid); background: palette(window); }")
-        self.pages_box = QVBoxLayout(self.frame)
-        self.pages_box.setContentsMargins(0, 0, 0, 0)
-        box.addWidget(self.frame)
-        self.pages: list[QWidget] = []
-        self.bar.currentChanged.connect(self._switch)
+        self.currentChanged.connect(lambda _i: self.updateGeometry())
 
-    def addTab(self, page: QWidget, label: str) -> None:  # noqa: N802 - like QTabWidget
-        self.pages.append(page)
-        self.pages_box.addWidget(page)
-        page.setVisible(len(self.pages) == 1)
-        self.bar.addTab(label)
+    def _extra(self) -> int:
+        frame = self.style().pixelMetric(QStyle.PixelMetric.PM_DefaultFrameWidth, None, self)
+        return self.tabBar().sizeHint().height() + 2 * frame + 2
 
-    def _switch(self, index: int) -> None:
-        for i, page in enumerate(self.pages):
-            page.setVisible(i == index)
-        self.currentChanged.emit(index)
+    def _page_height(self, width: int | None = None) -> int:
+        page = self.currentWidget()
+        if page is None:
+            return 0
+        if width is not None and page.hasHeightForWidth():
+            return page.heightForWidth(width)
+        return max(page.sizeHint().height(), page.minimumSizeHint().height())
 
-    def setCurrentIndex(self, index: int) -> None:  # noqa: N802
-        self.bar.setCurrentIndex(index)
+    def sizeHint(self):  # type: ignore[no-untyped-def]  # noqa: N802
+        hint = super().sizeHint()
+        hint.setHeight(self._page_height() + self._extra())
+        return hint
 
-    def currentIndex(self) -> int:  # noqa: N802
-        return self.bar.currentIndex()
+    def minimumSizeHint(self):  # type: ignore[no-untyped-def]  # noqa: N802
+        hint = super().minimumSizeHint()
+        hint.setHeight(self._page_height() + self._extra())
+        return hint
 
-    def setTabText(self, index: int, text: str) -> None:  # noqa: N802
-        self.bar.setTabText(index, text)
+    def hasHeightForWidth(self) -> bool:  # noqa: N802
+        return True
 
-    def count(self) -> int:
-        return len(self.pages)
-
-    def widget(self, index: int) -> QWidget:
-        return self.pages[index]
+    def heightForWidth(self, width: int) -> int:  # noqa: N802
+        return self._page_height(max(0, width - 4)) + self._extra()
 
 
 class ElidedLabel(QLabel):
