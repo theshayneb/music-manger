@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.6.1
+
+- **Obsidian tags as chips**: every tag used in your library shows as a chip under the Obsidian tags box (Extra
+  tab), in alphabetical order. Click chips to add or remove tags; the ones the song has are highlighted. The box
+  can still be typed in, and a new tag typed there becomes a chip too. Several tags are saved as separate values,
+  which Media Manager reads as a list for the note's `tags`. (With several songs selected whose tags differ, the
+  chips are off, so they can't give every song the same tags by accident.)
+
 ## 0.6.0
 
 - **Ratings in your Obsidian scale** everywhere: 💣 (1 star), ⭐⭐, ⭐⭐⭐, ⭐⭐⭐⭐, 🩷 (5 stars). The Tags panel's

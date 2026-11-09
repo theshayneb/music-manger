@@ -30,6 +30,7 @@ from PySide6.QtWidgets import (
 
 from ..core import tags
 from ..core.tags import Details, Track
+from .flowlayout import FlowLayout
 from .model import stars
 
 MIXED = "(mixed)"
@@ -121,34 +122,14 @@ class ComboField(QComboBox):
         self.blockSignals(False)
 
 
-class TagsField(ComboField):
-    """Obsidian tags: picking one from the list adds it to those already there."""
-
-    def __init__(self, parent: QWidget | None = None):
-        super().__init__(parent)
-        self.activated.disconnect()
-        self.activated.connect(self._add)
-        self._before = ""
-
-    def showPopup(self) -> None:  # noqa: N802
-        self._before = self.lineEdit().text()
-        super().showPopup()
-
-    def _add(self, index: int) -> None:
-        picked = self.itemText(index)
-        current = tags.split_tags(self._before)
-        if picked.casefold() not in {c.casefold() for c in current}:
-            current.append(picked)
-        text = " ".join(f"#{c}" for c in current)
-        self.setEditText(text)
-        self._before = ""
-        self.textEdited.emit(text)
+class TagsField(QLineEdit):
+    """Obsidian tags, typed: "#feminism #funny" (new ones can be typed here; the chips below pick known ones)."""
 
     def setText(self, text: str) -> None:  # noqa: N802
-        self.setEditText(" ".join(f"#{t}" for t in tags.split_tags(text)))
+        super().setText(" ".join(f"#{t}" for t in tags.split_tags(text)))
 
 
-CHOICE_FIELDS = ("genre", "language", "tempo", "obsidian_tags", "album_type")
+CHOICE_FIELDS = ("genre", "language", "tempo", "album_type")
 COVER_MIME = "application/x-music-manager-cover"
 
 
@@ -237,8 +218,9 @@ class TagEditor(QWidget):
         self.edits["original_artist"].setToolTip("Who first recorded it (for a cover). Several: separate with ;")
         self.edits["original_year"].setToolTip("The year it first came out")
         self.edits["obsidian_tags"].setToolTip(
-            "Tags for the song's note in your Obsidian vault, e.g. #feminism #holiday. Pick from the list to add "
-            "one. Saved as the file's “Obsidian Tags” tag, which Media Manager can read into the note's tags.")
+            "Tags for the song's note in your Obsidian vault, e.g. #feminism #holiday. Click the chips below to add or "
+            "remove the ones you've used before, or type new ones here. Saved as the file's “Obsidian Tags” tag "
+            "(one value per tag), which Media Manager reads into the note's tags.")
         self.edits["obsidian_tags"].setPlaceholderText("#feminism #holiday")
         self.edits["edition"].setToolTip("e.g. Deluxe Edition, iTunes Version (saved like MusicBee: TXXX:TSST). "
                                          "Plex and Symfonium don't show it.")
@@ -261,6 +243,16 @@ class TagEditor(QWidget):
         self.rating = RatingStars()
         form.addRow("Rating", self.rating)
         self.tag_tabs.addTab(standard, "Standard")
+        chips_box = QWidget()
+        self.chips = FlowLayout(chips_box, spacing=4)
+        self.chip_buttons: dict[str, QToolButton] = {}
+        self.chips_hint = QLabel("Tags you've used will show here as chips to click.")
+        self.chips_hint.setWordWrap(True)
+        self.chips_hint.setStyleSheet("color: palette(placeholder-text);")
+        more.addRow(self.chips_hint)
+        more.addRow(chips_box)
+        self.edits["obsidian_tags"].textEdited.connect(lambda _t: self._update_chips())
+        self.edits["obsidian_tags"].editingFinished.connect(self._add_typed_chips)
         self.tag_tabs.addTab(extra, "Extra")
         other = QWidget()
         other_box = QVBoxLayout(other)
@@ -358,6 +350,7 @@ class TagEditor(QWidget):
         ratings = {t.rating for t in tracks}
         self.rating.set_value(next(iter(ratings)) if len(ratings) == 1 else 0, mixed=len(ratings) > 1)
         self.rating.setEnabled(writable)
+        self._update_chips()
         self.lyrics.setEnabled(writable and not many)
         if many:
             self.lyrics.setPlainText("")
@@ -421,6 +414,7 @@ class TagEditor(QWidget):
                     self.cover.setText("Art will be removed")
         self.changed = pending
         self._mark()
+        self._update_chips()
 
     def _show_cover(self, data: bytes | None, tracks: list[Track], new: bool = False) -> None:
         image = QImage.fromData(QByteArray(data)) if data else QImage()
@@ -609,11 +603,67 @@ class TagEditor(QWidget):
         self._mark()
 
     def set_choices(self, choices: dict[str, list[str]]) -> None:
-        """The values offered in the Genre, Language and Tempo drop-downs."""
+        """The values offered in the Genre, Language and Tempo drop-downs, and the Obsidian tag chips."""
         for key, values in choices.items():
             edit = self.edits.get(key)
             if isinstance(edit, ComboField):
                 edit.set_choices(values)
+        if "obsidian_tags" in choices:
+            self._set_chips(choices["obsidian_tags"])
+
+    # ------------------------------------------------------------ Obsidian tag chips
+    CHIP_STYLE = ("QToolButton { border: 1px solid palette(mid); border-radius: 10px; padding: 2px 8px; }"
+                  "QToolButton:checked { background: palette(highlight); color: palette(highlighted-text); "
+                  "border-color: palette(highlight); }")
+
+    def _set_chips(self, names: list[str]) -> None:
+        known = {n.casefold(): n for n in self.chip_buttons}
+        for name in names:
+            known.setdefault(tags.clean_tag(name).casefold(), tags.clean_tag(name))
+        while self.chips.count():
+            item = self.chips.takeAt(0)
+            if item.widget():
+                item.widget().deleteLater()
+        self.chip_buttons = {}
+        for name in sorted((n for n in known.values() if n), key=str.casefold):  # alphabetical
+            chip = QToolButton(text=f"#{name}")
+            chip.setCheckable(True)
+            chip.setStyleSheet(self.CHIP_STYLE)
+            chip.setToolTip(f"Add or remove #{name}")
+            chip.clicked.connect(lambda on, name=name: self._chip_clicked(name, on))
+            self.chips.addWidget(chip)
+            self.chip_buttons[name] = chip
+        self.chips_hint.setVisible(not self.chip_buttons)
+        self._update_chips()
+
+    def _update_chips(self) -> None:
+        """Chips of the tags in the box are highlighted. With several songs whose tags differ, the chips
+        are off (they'd set the same tags on all of them)."""
+        edit = self.edits["obsidian_tags"]
+        current = {t.casefold() for t in tags.split_tags(edit.text())}
+        usable = edit.isEnabled() and not (len(self.tracks) > 1 and edit.placeholderText() == MIXED
+                                           and not edit.text())
+        for name, chip in self.chip_buttons.items():
+            chip.setChecked(name.casefold() in current)
+            chip.setEnabled(usable)
+
+    def _chip_clicked(self, name: str, on: bool) -> None:
+        edit = self.edits["obsidian_tags"]
+        current = tags.split_tags(edit.text())
+        if on and name.casefold() not in {c.casefold() for c in current}:
+            current.append(name)
+        if not on:
+            current = [c for c in current if c.casefold() != name.casefold()]
+        text = " ".join(f"#{c}" for c in current)
+        edit.setText(text)
+        self._edited("obsidian_tags", text)
+        self._update_chips()
+
+    def _add_typed_chips(self) -> None:
+        """A new tag typed in the box becomes a chip too."""
+        typed = tags.split_tags(self.edits["obsidian_tags"].text())
+        if any(t.casefold() not in {n.casefold() for n in self.chip_buttons} for t in typed):
+            self._set_chips(list(self.chip_buttons) + typed)
 
     def apply_lookup(self, fields: dict[str, str], cover: bytes | None, lyrics: str | None) -> None:
         """Put what was chosen in the lookup window into the editor, ready to Save."""

@@ -301,3 +301,29 @@ def test_album_view_columns_can_be_dragged(app, song, tmp_path):
     assert window.albums.horizontalHeader().visualIndex(keys.index("artist")) == keys.index("artist")
     window.close()
     assert [c["key"] for c in window.settings.album_columns][:4] == keys[:4]
+
+
+def test_obsidian_tag_chips(app, song):
+    from mutagen.id3 import ID3
+
+    from music_manager.ui.editor import TagEditor
+
+    path = song("x.mp3")
+    tags.write(str(path), {"obsidian_tags": "funny"})
+    d = tags.read(str(path), with_details=True)
+    editor = TagEditor()
+    editor.set_choices({"obsidian_tags": ["holiday", "funny", "Feminism"]})
+    editor.show_tracks([d.track], d)
+    assert list(editor.chip_buttons) == ["Feminism", "funny", "holiday"]  # alphabetical
+    assert [c.isChecked() for c in editor.chip_buttons.values()] == [False, True, False]
+    editor.chip_buttons["Feminism"].click()
+    editor.chip_buttons["holiday"].click()
+    editor.chip_buttons["funny"].click()  # off again
+    assert editor.edits["obsidian_tags"].text() == "#Feminism #holiday"
+    editor.edits["obsidian_tags"].setText("#Feminism #holiday #atheism")  # typed by hand
+    editor.edits["obsidian_tags"].editingFinished.emit()
+    assert "atheism" in editor.chip_buttons
+    tags.write(str(path), {"obsidian_tags": editor.edits["obsidian_tags"].text()})
+    # Several separate values in the file: Media Manager reads them as a list for the note's tags.
+    frame = ID3(str(path))["TXXX:Obsidian Tags"]
+    assert frame.text == ["Feminism", "holiday", "atheism"]
