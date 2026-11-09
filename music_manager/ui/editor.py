@@ -244,7 +244,7 @@ class TagEditor(QWidget):
         form.addRow("Rating", self.rating)
         self.tag_tabs.addTab(standard, "Standard")
         chips_box = QWidget()
-        self.chips = FlowLayout(chips_box, spacing=4)
+        self.chips = FlowLayout(chips_box, spacing=6)
         self.chip_buttons: dict[str, QToolButton] = {}
         self.chips_hint = QLabel("Tags you've used will show here as chips to click.")
         self.chips_hint.setWordWrap(True)
@@ -612,9 +612,12 @@ class TagEditor(QWidget):
             self._set_chips(choices["obsidian_tags"])
 
     # ------------------------------------------------------------ Obsidian tag chips
-    CHIP_STYLE = ("QToolButton { border: 1px solid palette(mid); border-radius: 10px; padding: 2px 8px; }"
-                  "QToolButton:checked { background: palette(highlight); color: palette(highlighted-text); "
-                  "border-color: palette(highlight); }")
+    # Style A: brighter text on a filled pill; the song's tags in solid blue and bold.
+    CHIP_STYLE = ("QToolButton { color: #e8eaee; background: #3a3e45; border: 1px solid #5a5f68; border-radius: 11px;"
+                  " padding: 3px 10px; font-size: 13px; }"
+                  "QToolButton:hover { border-color: #8a9099; }"
+                  "QToolButton:checked { background: #3b6fc4; border-color: #5b8fe4; color: white; font-weight: 600; }"
+                  "QToolButton:disabled { color: #8a8f97; background: #2e3136; }")
 
     def _set_chips(self, names: list[str]) -> None:
         known = {n.casefold(): n for n in self.chip_buttons}

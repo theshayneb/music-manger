@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.6.2
+
+- Easier-to-read Obsidian tag chips (style A): brighter text on a filled pill, a slightly bigger font and more
+  room; the song's tags are solid blue and bold.
+
 ## 0.6.1
 
 - **Obsidian tags as chips**: every tag used in your library shows as a chip under the Obsidian tags box (Extra
