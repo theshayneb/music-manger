@@ -84,3 +84,20 @@ def test_jump_bar_finds_artists():
     assert names[find(songs, "b")] == "Madonna"  # nothing starts with B: the next one
     typed = Typed()
     assert typed.add("M") == "M" and typed.add("Y") == "MY"
+
+
+def test_standard_songs_before_edition_songs():
+    songs = [t("Guilty Filthy Soul [Remix]", "12", edition="Deluxe Edition", album="Megalithic Symphony"),
+             t("Not Your Fault", "12", album="Megalithic Symphony"),
+             t("Sail", "10", album="Megalithic Symphony")]
+    [section] = albums.build(songs)
+    assert [(g.heading, [x.title for x in g.tracks]) for g in section.albums[0].groups] == [
+        ("", ["Sail", "Not Your Fault"]), ("Deluxe Edition", ["Guilty Filthy Soul [Remix]"])]
+
+
+def test_albums_by_year_even_with_different_sort_artists():
+    songs = [t("Isn't It Time", "03", album="That's Why God Made the Radio", year="2012", artist="The Beach Boys",
+               album_artist="The Beach Boys", sort_artist="Beach Boys, The"),
+             t("Do It Again", "01", album="20/20", year="1969", artist="The Beach Boys", album_artist="The Beach Boys")]
+    [section] = albums.build(songs)
+    assert [a.title for a in section.albums] == ["20/20", "That's Why God Made the Radio"]

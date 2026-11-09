@@ -30,28 +30,33 @@ from PySide6.QtWidgets import (
 
 from ..core import tags
 from ..core.tags import Details, Track
+from .model import stars
 
 MIXED = "(mixed)"
 COVER_SIZE = 150
 
 
 class RatingStars(QWidget):
+    """The rating on one line, in the Obsidian vault's scale: 💣 ⭐⭐ ⭐⭐⭐ ⭐⭐⭐⭐ 🩷 (1-5 stars).
+    The current level is highlighted; click it again to clear. Saved straight away (Ctrl+1..5, Ctrl+0)."""
+
     changed = Signal(int)
 
     def __init__(self, parent: QWidget | None = None):
         super().__init__(parent)
         layout = QHBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
-        layout.setSpacing(0)
+        layout.setSpacing(1)
         self.value = 0
         self.mixed = False
         self.buttons: list[QToolButton] = []
         for n in range(1, 6):
-            b = QToolButton(text="☆")
+            b = QToolButton(text=stars(n))
             b.setAutoRaise(True)
-            b.setToolTip(f"{n} star{'s' if n > 1 else ''} (Ctrl+{n}). Click again to clear.")
-            b.setStyleSheet("QToolButton { font-size: 16px; color: #f2b01e; padding: 0px; }")
-            b.setFixedWidth(24)
+            b.setCheckable(True)
+            b.setToolTip(f"{stars(n)} = {n} star{'s' if n > 1 else ''} (Ctrl+{n}). Click again to clear.")
+            b.setStyleSheet("QToolButton { font-size: 11px; padding: 1px 2px; }"
+                            "QToolButton:checked { background: palette(highlight); border-radius: 4px; }")
             b.clicked.connect(lambda _=False, n=n: self._click(n))
             layout.addWidget(b)
             self.buttons.append(b)
@@ -66,7 +71,7 @@ class RatingStars(QWidget):
     def set_value(self, value: int, mixed: bool = False) -> None:
         self.value, self.mixed = value, mixed
         for i, b in enumerate(self.buttons, start=1):
-            b.setText("★" if (not mixed and i <= value) else "☆")
+            b.setChecked(not mixed and i == value)
         self.note.setText(MIXED if mixed else "")
 
 
@@ -315,7 +320,7 @@ class TagEditor(QWidget):
         self.lyrics.textChanged.connect(self._lyrics_edited)
         self.rating.changed.connect(lambda v: self.rating_requested.emit([t.path for t in self.tracks], v))
         self.save_btn.clicked.connect(self.save)
-        self.revert_btn.clicked.connect(lambda: self.show_tracks(self.tracks, self._details))
+        self.revert_btn.clicked.connect(lambda: self.show_tracks(self.tracks, self._details, keep_pending=False))
         self.art_file.clicked.connect(self._art_from_file)
         self.art_paste.clicked.connect(self._art_paste)
         self.art_copy.clicked.connect(self._art_copy)
@@ -325,8 +330,12 @@ class TagEditor(QWidget):
         self.show_tracks([], None)
 
     # ------------------------------------------------------------ showing
-    def show_tracks(self, tracks: list[Track], details: Details | None) -> None:
-        """details: of the first track (its cover and lyrics), or None while loading."""
+    def show_tracks(self, tracks: list[Track], details: Details | None, keep_pending: bool = True) -> None:
+        """details: of the first track (its cover and lyrics), or None while loading.
+        Showing the same songs again (after another change was saved, say) keeps what you've typed
+        and not saved yet, in every tab; only Undo changes or picking other songs drops it."""
+        same = [t.path for t in tracks] == [t.path for t in self.tracks]
+        pending = dict(self.changed) if (keep_pending and same and tracks) else {}
         self._loading = True
         self.tracks, self._details, self.changed = list(tracks), details, {}
         many = len(tracks) > 1
@@ -390,6 +399,28 @@ class TagEditor(QWidget):
         else:
             self.status.setText("")
         self._loading = False
+        if pending:
+            self._put_back(pending)
+
+    def _put_back(self, pending: dict) -> None:
+        """Typed-but-unsaved values back into their boxes (and still marked as changes)."""
+        for key, value in pending.items():
+            if key in self.edits:
+                self._loading = True
+                self.edits[key].setText(value)
+                self._loading = False
+            elif key == "lyrics" and len(self.tracks) == 1:
+                self._loading = True
+                self.lyrics.setPlainText(value)
+                self._loading = False
+            elif key == "cover":
+                if value:
+                    self._show_cover(value[0], self.tracks, new=True)
+                else:
+                    self.cover.setPixmap(QPixmap())
+                    self.cover.setText("Art will be removed")
+        self.changed = pending
+        self._mark()
 
     def _show_cover(self, data: bytes | None, tracks: list[Track], new: bool = False) -> None:
         image = QImage.fromData(QByteArray(data)) if data else QImage()

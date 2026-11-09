@@ -18,6 +18,11 @@ def server(tmp_path):
         def log_message(self, *a):
             pass
 
+        def do_PUT(self):  # noqa: N802
+            seen.append("PUT " + self.path)
+            self.send_response(200)
+            self.end_headers()
+
         def do_GET(self):  # noqa: N802
             seen.append(self.path)
             if self.headers.get("X-Plex-Token") != "secret":
@@ -68,3 +73,14 @@ def test_wrong_token_and_rescan(server):
         plex.Plex(url, "wrong").music_sections()
     assert plex.Plex(url, "secret").refresh_folder(music) == "Music"
     assert any(p.startswith("/library/sections/7/refresh?path=") for p in seen)
+
+
+def test_ratings_go_to_plex_two_points_per_star(server):
+    url, _music, seen = server
+    client = plex.Plex(url, "secret")
+    client.rate("1", 5)
+    client.rate("1", 1)
+    client.rate("1", 0)
+    puts = [p for p in seen if p.startswith("PUT ")]
+    assert ["rating=10" in puts[0], "rating=2" in puts[1], "rating=-1" in puts[2]] == [True, True, True]
+    assert all("/:/rate?key=1" in p and "identifier=com.plexapp.plugins.library" in p for p in puts)

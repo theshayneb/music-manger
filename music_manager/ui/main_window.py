@@ -45,7 +45,7 @@ from .editor import TagEditor
 from .jump import JumpBar, JumpTable, Typed, find
 from .lookup import LookupDialog, net
 from .lyrics_review import Found, LyricsReview
-from .model import COLUMN_KEYS, HIDDEN_BY_DEFAULT, PLEX_PLAYS, TrackFilter, TrackModel
+from .model import COLUMN_KEYS, HIDDEN_BY_DEFAULT, PLEX_PLAYS, TrackFilter, TrackModel, stars
 from .player import PlayerBar
 from .review import KeepReview
 from .theme import apply_theme
@@ -112,7 +112,8 @@ class MainWindow(QMainWindow):
         self.views.customContextMenuRequested.connect(self._views_menu)
         self._fill_views()
         self.add_view_btn = QToolButton()
-        self.add_view_btn.setText("＋ Add")
+        self.add_view_btn.setText("＋ Add ▾")
+        self.add_view_btn.setStyleSheet("QToolButton::menu-indicator { image: none; width: 0px; }")
         self.add_view_btn.setToolTip("Add a folder, or save the current search (e.g. Library songs with no album art)")
         self.add_view_btn.setPopupMode(QToolButton.ToolButtonPopupMode.InstantPopup)
         add_menu = QMenu(self)
@@ -175,7 +176,10 @@ class MainWindow(QMainWindow):
         self.albums.setVerticalScrollMode(QAbstractItemView.ScrollMode.ScrollPerPixel)
         self.albums.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
         aheader = self.albums.horizontalHeader()
-        aheader.setSectionsMovable(False)  # the album cells are spans, which don't survive moved columns
+        # Columns can be dragged; the move is made in the model (see _album_column_moved), because the
+        # album cells are spans, which don't survive moved header sections.
+        aheader.setSectionsMovable(True)
+        aheader.sectionMoved.connect(self._album_column_moved)
         aheader.setStretchLastSection(True)
         aheader.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
         aheader.customContextMenuRequested.connect(lambda pos: self._header_menu(pos, self.albums))
@@ -301,6 +305,7 @@ class MainWindow(QMainWindow):
         self.layout_btn.setText("▦ Layout")
         self.layout_btn.setToolTip("Albums or song list, grouping and sorting (F3 switches between the two)")
         self.layout_btn.setPopupMode(QToolButton.ToolButtonPopupMode.InstantPopup)
+        self.layout_btn.setStyleSheet("QToolButton::menu-indicator { image: none; width: 0px; }")
         self.layout_menu = QMenu(self)
         self.layout_menu.aboutToShow.connect(self._fill_layout_menu)
         self.layout_btn.setMenu(self.layout_menu)
@@ -348,20 +353,49 @@ class MainWindow(QMainWindow):
                     header.resizeSection(col, widths[key])
 
     def _restore_album_columns(self) -> None:
-        header = self.albums.horizontalHeader()
-        state = self.settings.column_state.get(ALBUM_COLUMNS_KEY)
-        if state and header.restoreState(QByteArray.fromBase64(state.encode())):
+        """The album view's columns: their order, widths and which are shown, saved by name (the
+        model's own column order is what moves, since its cover and heading cells span columns)."""
+        saved = [c for c in self.settings.album_columns if isinstance(c, dict) and c.get("key")]
+        if saved:
+            by_key = {k: c for k, c in ((c[0], c) for c in self.album_model.columns)}
+            order = [c["key"] for c in saved if c["key"] in by_key and c["key"] != "art"]
+            rest = [k for k in by_key if k not in order and k != "art"]
+            self.album_model.beginResetModel()
+            self.album_model.columns = [by_key["art"]] + [by_key[k] for k in order + rest]
+            self.album_model.endResetModel()
+            self._apply_album_columns({c["key"]: c for c in saved})
             return
         shown = {"art", "track", "title", "artist", "album_artist", "rating", "plays", "length"}
-        keys = [k for k, _ in self.album_model.columns]
-        for col, key in enumerate(keys):
-            header.setSectionHidden(col, key not in shown)
-        widths = {"art": 380, "track": 40, "title": 300, "artist": 200, "album_artist": 180, "rating": 80,
+        widths = {"art": 380, "track": 40, "title": 300, "artist": 200, "album_artist": 180, "rating": 90,
                   "plays": 50, "length": 55}
+        self._apply_album_columns({k: {"width": widths.get(k, 100), "hidden": k not in shown}
+                                   for k, _ in self.album_model.columns})
 
-        for col, key in enumerate(keys):
-            if key in widths:
-                header.resizeSection(col, widths[key])
+    def _album_columns_now(self) -> dict[str, dict]:
+        header = self.albums.horizontalHeader()
+        return {key: {"key": key, "width": header.sectionSize(col), "hidden": header.isSectionHidden(col)}
+                for col, (key, _label) in enumerate(self.album_model.columns)}
+
+    def _apply_album_columns(self, config: dict[str, dict]) -> None:
+        header = self.albums.horizontalHeader()
+        header.blockSignals(True)
+        for col, (key, _label) in enumerate(self.album_model.columns):
+            c = config.get(key, {})
+            header.setSectionHidden(col, bool(c.get("hidden", False)) and key != "art")
+            if c.get("width"):
+                header.resizeSection(col, int(c["width"]))
+        header.blockSignals(False)
+
+    def _album_column_moved(self, _logical: int, old: int, new: int) -> None:
+        """A column header was dragged: put the header back and move the column in the model instead."""
+        header = self.albums.horizontalHeader()
+        header.blockSignals(True)
+        header.moveSection(new, old)
+        header.blockSignals(False)
+        config = self._album_columns_now()
+        self.album_model.move_column(old, new)
+        self._apply_album_columns(config)
+        self._rebuild_albums()
 
     def jump_to(self, letter: str) -> None:
         """Scroll to the first artist starting with the letters clicked or typed (M, then Y: My…)."""
@@ -443,6 +477,34 @@ class MainWindow(QMainWindow):
         if self.album_model.rows:
             self.album_model.dataChanged.emit(self.album_model.index(0, 0), self.album_model.index(
                 len(self.album_model.rows) - 1, self.album_model.columnCount() - 1))
+
+    def send_ratings_to_plex(self, paths: list[str], stars: int) -> None:
+        """Ratings changed here go to Plex too (when Plex is set up and has the songs)."""
+        if not (paths and self.plex_ready() and self.settings.plex_ratings):
+            return
+        client = Plex(self.settings.plex_url, self.settings.plex_token)
+        known = self._plex_tracks
+
+        def work() -> tuple[int, int]:
+            tracks = known or by_file(client.all_tracks())
+            sent = missing = 0
+            for path in paths:
+                found = plex_match(path, *tracks)
+                if found is None or not found.key:
+                    missing += 1
+                    continue
+                client.rate(found.key, stars)
+                sent += 1
+            return sent, missing
+
+        def done(result, error) -> None:  # type: ignore[no-untyped-def]
+            if error:
+                self.flash(f"The rating was saved in the file, but Plex couldn't be updated: {error}")
+            elif result and result[1]:
+                self.flash(f"Rating sent to Plex for {result[0]}; {result[1]} not found in Plex "
+                           "(Plex may not have scanned them yet).")
+
+        net().run(work, done)
 
     def plex_rescan_soon(self) -> None:
         """After Keep or tag changes in the Library: ask Plex to rescan the folder (once, a few seconds later)."""
@@ -977,7 +1039,10 @@ class MainWindow(QMainWindow):
         if not paths or not changes:
             return
         state = self._release(paths)
-        self.editor.changed = {}
+        # Only what's being saved stops being "not saved": other boxes you've typed in keep their changes.
+        for key, value in changes.items():
+            if self.editor.changed.get(key) == value:
+                del self.editor.changed[key]
         self.status.setText(f"Saving tags of {len(paths)} song{'s' if len(paths) != 1 else ''}…")
 
         def work() -> list[tuple[str, str]]:
@@ -993,6 +1058,9 @@ class MainWindow(QMainWindow):
             self._resume(state)
             self._report("Saved tags", len(paths), failures, error)
             self._mark_others_stale()
+            if "rating" in changes:
+                self.send_ratings_to_plex([p for p in paths if p not in {f for f, _e in (failures or [])}],
+                                          int(changes["rating"]))
             library = self.settings.library_folder
             if library and any(fileops.same_path(os.path.dirname(p), library) or
                                os.path.normcase(p).startswith(os.path.normcase(library) + os.sep) for p in paths):
@@ -1365,7 +1433,7 @@ class MainWindow(QMainWindow):
         menu.addAction("🔎 Find lyrics (Ctrl+Shift+L)", self.find_lyrics_selected)
         rating = menu.addMenu("Rating")
         for n in range(5, -1, -1):
-            rating.addAction(("★" * n) or "No rating", lambda n=n: self.set_rating(self.selected_paths(), n))
+            rating.addAction(stars(n) or "No rating", lambda n=n: self.set_rating(self.selected_paths(), n))
         menu.addSeparator()
         menu.addAction("Show in Explorer (Ctrl+E)", self.show_in_explorer)
         menu.addAction("Open in default app", lambda: QDesktopServices.openUrl(QUrl.fromLocalFile(tracks[0].path)))
@@ -1419,7 +1487,7 @@ class MainWindow(QMainWindow):
     # ================================================================ album view
     def _apply_mode(self) -> None:
         self.stack.setCurrentWidget(self.active())
-        self.layout_btn.setText("▦ Albums" if self.album_mode() else "☰ Song list")
+        self.layout_btn.setText("▦ Albums ▾" if self.album_mode() else "☰ Song list ▾")
         if self.album_mode():
             self._rebuild_albums()
 
@@ -1535,8 +1603,7 @@ class MainWindow(QMainWindow):
         self.settings.window_state = bytes(self.saveState().toBase64()).decode()
         header_state = self.table.horizontalHeader().saveState().toBase64()
         self.settings.column_state[COLUMNS_STATE_KEY] = bytes(header_state).decode()
-        album_state = self.albums.horizontalHeader().saveState().toBase64()
-        self.settings.column_state[ALBUM_COLUMNS_KEY] = bytes(album_state).decode()
+        self.settings.album_columns = list(self._album_columns_now().values())
         self.settings.album_layout = dict(self.album_model.layout)
         try:
             self.settings.save()

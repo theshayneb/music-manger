@@ -91,9 +91,15 @@ class LyricsReview(QDialog):
         self.found = QPlainTextEdit()
         self.found.textChanged.connect(self._edited)
         found_box.addWidget(self.found)
+        use_row = QHBoxLayout()
         self.use = QCheckBox("Use these lyrics for this song")
         self.use.toggled.connect(self._use_toggled)
-        found_box.addWidget(self.use)
+        use_row.addWidget(self.use, 1)
+        google = QPushButton("Search Google")
+        google.setToolTip("Search Google for this song's lyrics; paste them into the box above")
+        google.clicked.connect(self._google)
+        use_row.addWidget(google)
+        found_box.addLayout(use_row)
         rl.addLayout(now_box, 1)
         rl.addLayout(found_box, 1)
         split.addWidget(right)
@@ -120,6 +126,9 @@ class LyricsReview(QDialog):
     def chosen(self) -> list[Found]:
         return [i for i in self.items if i.use and i.text.strip()]
 
+    def _checkable(self, item: Found) -> bool:
+        return item.found is not None or bool(item.text.strip())
+
     # ------------------------------------------------------------
     def _label_all(self) -> None:
         self.songs.blockSignals(True)
@@ -127,7 +136,9 @@ class LyricsReview(QDialog):
             widget_item = self.songs.item(row)
             widget_item.setText(f"{item.track.name}\n{status(item)}")
             widget_item.setCheckState(Qt.CheckState.Checked if item.use else Qt.CheckState.Unchecked)
-            if item.found is None:
+            if self._checkable(item):
+                widget_item.setFlags(widget_item.flags() | Qt.ItemFlag.ItemIsUserCheckable)
+            else:
                 widget_item.setFlags(widget_item.flags() & ~Qt.ItemFlag.ItemIsUserCheckable)
         self.songs.blockSignals(False)
 
@@ -151,12 +162,31 @@ class LyricsReview(QDialog):
         self.use.setChecked(item.use)
         self._loading = False
 
+    def _google(self) -> None:
+        from .lookup import open_google_lyrics
+
+        row = self.songs.currentRow()
+        if row >= 0:
+            t = self.items[row].track
+            open_google_lyrics(t.title or t.name.rsplit(".", 1)[0], t.artist)
+            self.found.setReadOnly(False)
+            self.use.setEnabled(True)
+            self.found.setFocus()
+
     def _edited(self) -> None:
         if self._loading:
             return
         row = self.songs.currentRow()
         if row >= 0:
-            self.items[row].text = self.found.toPlainText()
+            item = self.items[row]
+            item.text = self.found.toPlainText()
+            if item.text.strip() and not item.use and self.found.hasFocus():  # pasted from the web: use it
+                item.use = True
+                self._loading = True
+                self.use.setChecked(True)
+                self._loading = False
+                self._label_all()
+                self._summary()
 
     def _use_toggled(self, on: bool) -> None:
         if self._loading:

@@ -258,3 +258,46 @@ def test_lyrics_review_ticks_only_what_changes(app):
     assert [(i.track.path, i.text) for i in review.chosen()] == [("a.mp3", "new words")]
     review.use.setChecked(True)
     assert [i.text for i in review.chosen()] == ["new words", "plain words, fixed"]
+
+
+def test_typed_changes_survive_other_saves_and_tab_switches(app, song):
+    from music_manager.ui.editor import TagEditor
+
+    path = song("x.mp3")
+    tags.write(str(path), {"title": "Old", "rating": 2})
+    d = tags.read(str(path), with_details=True)
+    editor = TagEditor()
+    editor.show_tracks([d.track], d)
+    editor.apply_field("title", "New title")       # Standard tab
+    editor.tag_tabs.setCurrentIndex(1)
+    editor.apply_field("edition", "Deluxe")         # Extra tab
+    editor.tag_tabs.setCurrentIndex(0)
+    # Something else gets saved (the rating, say) and the song is shown again:
+    tags.write(str(path), {"rating": 5})
+    d2 = tags.read(str(path), with_details=True)
+    editor.show_tracks([d2.track], d2)
+    assert editor.edits["title"].text() == "New title" and editor.edits["edition"].text() == "Deluxe"
+    assert editor.changed == {"title": "New title", "edition": "Deluxe"}
+    assert editor.rating.value == 5 and editor.rating.buttons[4].isChecked()
+    editor.revert_btn.click()  # Undo changes drops them
+    assert editor.edits["title"].text() == "Old" and not editor.changed
+
+
+@needs_ffmpeg
+def test_album_view_columns_can_be_dragged(app, song, tmp_path):
+    from music_manager.ui.main_window import MainWindow
+
+    p = song("music/X - A.mp3", seconds=1)
+    tags.write(str(p), {"title": "A", "artist": "X", "album": "One", "track": "1"})
+    window = MainWindow(Settings(library_folder=str(tmp_path / "music"), last_view="library"), FFMPEG)
+    window.show()
+    wait(app, window, 5, until=lambda: len(window.album_model.order()) == 1)
+    keys = [k for k, _ in window.album_model.columns]
+    title, artist = keys.index("title"), keys.index("artist")
+    window.albums.horizontalHeader().moveSection(artist, title)  # drag Artist before Title
+    wait(app, window, 1)
+    keys = [k for k, _ in window.album_model.columns]
+    assert keys[0] == "art" and keys.index("artist") < keys.index("title")
+    assert window.albums.horizontalHeader().visualIndex(keys.index("artist")) == keys.index("artist")
+    window.close()
+    assert [c["key"] for c in window.settings.album_columns][:4] == keys[:4]

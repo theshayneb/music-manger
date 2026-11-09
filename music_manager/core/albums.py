@@ -114,7 +114,10 @@ def _side(t: Track, multi_disc: bool) -> str:
 
 
 def make_album(key: tuple, tracks: list[Track], sides: bool = True) -> Album:
-    tracks = sorted(tracks, key=lambda t: (disc_number(t.disc), _int(t.track), t.title.casefold(), t.name.casefold()))
+    # Disc (or vinyl side) first; on each disc the standard songs, then each edition in alphabetical order
+    # ("Deluxe Edition", "iTunes Version"...); then by track number and title.
+    tracks = sorted(tracks, key=lambda t: (disc_number(t.disc), bool(t.edition.strip()), t.edition.strip().casefold(),
+                                           _int(t.track), t.title.casefold(), t.name.casefold()))
     discs = {disc_number(t.disc) for t in tracks if disc_number(t.disc)}
     multi_disc = len(discs) > 1 or any(_int(t.disc_total) > 1 for t in tracks)
     groups: list[Group] = []
@@ -171,7 +174,11 @@ def build(tracks: list[Track], group_by: str = "artist", order: str = "year", si
             heading = names.setdefault(a.key[1], a.artist or "(no artist)")
         sections.setdefault(heading, []).append(a)
     if group_by == "artist":
-        keys = sorted(sections, key=lambda h: (artist_sort_key(sections[h][0].key[0]), h.casefold()))
+        # Artists by Sort Artist (then name); inside an artist, albums by year, whatever Sort Artist each has.
+        keys = sorted(sections, key=lambda h: (min(a.key[0] for a in sections[h]), h.casefold()))
+        for h in keys:
+            sections[h].sort(key=lambda a: (a.year or "9999", a.title.casefold()) if order == "year"
+                             else (a.title.casefold(), a.year))
     elif group_by == "year":
         keys = sorted(sections, reverse=True)
     else:

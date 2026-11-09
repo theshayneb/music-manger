@@ -22,6 +22,7 @@ from PySide6.QtWidgets import (
 
 from ..core import tags
 from ..core.tags import Details, Track
+from .model import stars
 
 WARN = "⚠"
 FIELDS = [("title", "Title"), ("artist", "Artist"), ("album_artist", "Album Artist"), ("album", "Album"),
@@ -37,7 +38,7 @@ def value_of(t: Track, key: str) -> str:
         number, total = getattr(t, key), getattr(t, key + "_total")
         return f"{number} of {total}" if number and total else number
     if key == "rating":
-        return "★" * t.rating
+        return stars(t.rating)
     if key == "obsidian_tags":
         return " ".join(f"#{x}" for x in tags.split_tags(t.obsidian_tags))
     return str(getattr(t, key, "") or "")

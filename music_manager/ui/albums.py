@@ -18,7 +18,7 @@ from PySide6.QtWidgets import QAbstractItemView, QStyledItemDelegate, QStyleOpti
 from ..core import albums as grouping
 from ..core.tags import Track
 from .jump import JumpTable
-from .model import COLUMNS, TrackModel, fmt_time
+from .model import COLUMNS, TrackModel, fmt_time, stars
 
 ROW = 24
 HEADING_ROW = 40
@@ -42,7 +42,7 @@ class AlbumModel(QAbstractTableModel):
     def __init__(self, tracks_model: TrackModel) -> None:
         super().__init__()
         self.tracks_model = tracks_model
-        self.columns = ALBUM_COLUMNS
+        self.columns = list(ALBUM_COLUMNS)
         self.rows: list[Row] = []
         self.spans: list[tuple[int, int, int, int]] = []
         self._row_of: dict[str, int] = {}
@@ -67,7 +67,8 @@ class AlbumModel(QAbstractTableModel):
                 if s_index:
                     rows.append(Row("gap"))
                     spans.append((len(rows) - 1, 0, 1, ncols))
-                rows.append(Row("section", section.heading))
+                count = sum(a.have for a in section.albums)
+                rows.append(Row("section", f"{section.heading}  ({count})"))
                 spans.append((len(rows) - 1, 0, 1, ncols))
             for a_index, album in enumerate(section.albums):
                 if a_index or not section.heading:
@@ -102,11 +103,10 @@ class AlbumModel(QAbstractTableModel):
                 col, cs = first, ncols - first
             if rs > 1 or cs > 1:
                 view.setSpan(row, col, rs, cs)
+        # Every row's height, every time: a row keeps the height it had before a rebuild otherwise
+        # (a song row could stay as tall as the heading that used to be there).
         for i, r in enumerate(self.rows):
-            if r.kind == "section":
-                view.setRowHeight(i, HEADING_ROW)
-            elif r.kind == "gap":
-                view.setRowHeight(i, 14)
+            view.setRowHeight(i, HEADING_ROW if r.kind == "section" else 14 if r.kind == "gap" else ROW)
 
     # ------------------------------------------------------------ for the window
     def track(self, row: int) -> Track | None:
@@ -124,6 +124,15 @@ class AlbumModel(QAbstractTableModel):
 
     def first_row_of(self, album: grouping.Album) -> int:
         return next((i for i, r in enumerate(self.rows) if r.album is album), -1)
+
+    def move_column(self, src: int, dst: int) -> None:
+        """Drag-and-drop of a column header (the album column stays first)."""
+        if src == dst or 0 in (src, dst) or not (0 < src < len(self.columns)) or not (0 < dst < len(self.columns)):
+            return
+        self.beginResetModel()
+        column = self.columns.pop(src)
+        self.columns.insert(dst, column)
+        self.endResetModel()
 
     def set_cover(self, key: tuple, pixmap: QPixmap) -> None:
         self.covers[key] = pixmap
@@ -301,8 +310,9 @@ class ArtDelegate(QStyledItemDelegate):
         p.drawText(line, Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter,
                    p.fontMetrics().elidedText(album.title_line(), Qt.TextElideMode.ElideRight, width))
         y += 22
-        if album.rating:
-            paint_stars(p, x, y, album.rating)
+        if album.rating:  # the average, as the nearest level of the rating scale
+            p.drawText(QRect(x, y, width, 18), Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter,
+                       stars(int(album.rating + 0.5)))
         y += 20
         small = QFont(option.font)
         small.setPointSizeF(option.font.pointSizeF() * 0.92)

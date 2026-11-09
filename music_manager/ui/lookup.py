@@ -55,6 +55,17 @@ def _label(key: str) -> str:
             "disc": "Disc #"}.get(key, FIELD_LABELS.get(key, key.title()))
 
 
+def open_google_lyrics(title: str, artist: str) -> None:
+    """A Google search for "<song> by <artist> lyrics" in the web browser."""
+    import urllib.parse
+
+    from PySide6.QtCore import QUrl
+    from PySide6.QtGui import QDesktopServices
+
+    query = f'"{title}" by {artist} lyrics' if artist else f'"{title}" lyrics'
+    QDesktopServices.openUrl(QUrl("https://www.google.com/search?q=" + urllib.parse.quote_plus(query)))
+
+
 def _same(a: str, b: str) -> bool:
     """"03" and "3" are the same track number; "Halo" and "halo" the same title."""
     a, b = a.strip(), b.strip()
@@ -209,12 +220,21 @@ class LookupDialog(QDialog):
         self.lyric_list.currentRowChanged.connect(self._lyrics_selected)
         split.addWidget(self.lyric_list)
         self.lyric_text = QPlainTextEdit()
-        self.lyric_text.setPlaceholderText("Lyrics found online show here. You can edit them before using them.")
+        self.lyric_text.setPlaceholderText("Lyrics found online show here. You can edit them before using them, or "
+                                           "paste lyrics from a web page.")
+        self.lyric_text.textChanged.connect(self._lyrics_typed)
         split.addWidget(self.lyric_text)
         split.setStretchFactor(1, 1)
         v.addWidget(split, 1)
+        bottom = QHBoxLayout()
         self.use_lyrics = QCheckBox("Use these lyrics")
-        v.addWidget(self.use_lyrics)
+        bottom.addWidget(self.use_lyrics, 1)
+        google = QPushButton("Search Google for the lyrics")
+        google.setToolTip("Opens a Google search in your browser. Copy the lyrics from there and paste them into "
+                          "the box above, then tick “Use these lyrics”.")
+        google.clicked.connect(self._google_lyrics)
+        bottom.addWidget(google)
+        v.addLayout(bottom)
         if self.details and self.details.lyrics.strip():
             self.lyric_list.addItem("Current")
         self.tabs.addTab(page, "Lyrics")
@@ -384,6 +404,11 @@ class LookupDialog(QDialog):
         self.use_art.setChecked(bool(item) and item.data(Qt.ItemDataRole.UserRole) != "current")
 
     # ================================================================ lyrics
+    def _lyrics_typed(self) -> None:
+        # Typing or pasting in the box means you want what's there.
+        if self.lyric_text.hasFocus() and self.lyric_text.toPlainText().strip():
+            self.use_lyrics.setChecked(True)
+
     def _lyrics_selected(self, row: int) -> None:
         if row < 0:
             return
@@ -396,6 +421,12 @@ class LookupDialog(QDialog):
         if 0 <= index < len(self.lyrics_found):
             self.lyric_text.setPlainText(self.lyrics_found[index].text)
             self.use_lyrics.setChecked(True)
+
+    def _google_lyrics(self) -> None:
+        open_google_lyrics(self.title.text().strip(), self.artist.text().strip())
+        # Ready for pasting: an empty box (unless it already has lyrics) and "use" ticked once you paste.
+        self.lyric_list.clearSelection()
+        self.lyric_text.setFocus()
 
     # ================================================================ done
     def _accept(self) -> None:

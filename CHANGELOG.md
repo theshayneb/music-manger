@@ -1,5 +1,27 @@
 # Changelog
 
+## 0.6.0
+
+- **Ratings in your Obsidian scale** everywhere: 💣 (1 star), ⭐⭐, ⭐⭐⭐, ⭐⭐⭐⭐, 🩷 (5 stars). The Tags panel's
+  Rating line has one button per level (the current one highlighted; click it again to clear). Albums show
+  their average as the nearest level.
+- **Ratings go to Plex** when you change them here (with Plex set up): two Plex points per star, as Media Manager
+  does (💣 = 2 … 🩷 = 10); no rating removes it. A tick box in Settings turns it off. The file's own rating is
+  unchanged (Windows / MusicBee style).
+- **Album view sort**: Sort Artist, then albums by year; inside an album by disc or vinyl side, then the standard
+  songs, then each edition in alphabetical order, then track number. Fixed: a standard song with the same
+  track number as an edition song could show under the edition's heading.
+- Fixed: albums of one artist were out of year order when only some had a Sort Artist.
+- The **artist headings show how many songs** each artist has, e.g. "Beyoncé (12)".
+- **Columns can be dragged** to rearrange them in the album view too (their order, widths and which are shown
+  are remembered).
+- **Typed changes are kept** until you Save or Undo: saving something else (a rating, say) or switching tabs no
+  longer wipes what you've typed in the Tags panel.
+- **Search Google for the lyrics** in Find lyrics (one song, and the review for several): opens the search in your
+  browser; paste the lyrics into the box and they're ticked to be used.
+- Fixed: some song rows in the album view were taller than others.
+- Fixed: the ▾ arrow drew over the text of the Albums and ＋ Add buttons.
+
 ## 0.5.4
 
 - Find lyrics for several songs no longer asks first: it looks up every selected song (with or without lyrics)

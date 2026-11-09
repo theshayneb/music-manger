@@ -44,11 +44,11 @@ class Plex:
         # The server is on this PC or the home network: never through a system proxy.
         self._opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
 
-    def get(self, path: str, params: dict | None = None) -> dict:
+    def get(self, path: str, params: dict | None = None, method: str = "GET") -> dict:
         if not self.url or not self.token:
             raise PlexError("enter the Plex server's address and token in Settings")
         query = "?" + urllib.parse.urlencode(params) if params else ""
-        req = urllib.request.Request(self.url + path + query,
+        req = urllib.request.Request(self.url + path + query, method=method,
                                      headers={"Accept": "application/json", "X-Plex-Token": self.token})
         try:
             with self._opener.open(req, timeout=TIMEOUT) as resp:
@@ -84,6 +84,13 @@ class Plex:
 
     def all_tracks(self) -> list[PlexTrack]:
         return [t for s in self.music_sections() for t in parse_tracks(self.tracks(s["key"]))]
+
+    def rate(self, rating_key: str, stars: int) -> None:
+        """Your rating of a song in Plex, as Media Manager sets it: two Plex points per star
+        (💣 = 2, ⭐⭐ = 4, ⭐⭐⭐ = 6, ⭐⭐⭐⭐ = 8, 🩷 = 10); 0 stars removes it."""
+        rating = max(0, min(5, int(stars))) * 2 or -1
+        self.get("/:/rate", {"key": rating_key, "identifier": "com.plexapp.plugins.library", "rating": rating},
+                 method="PUT")
 
     def refresh_folder(self, folder: str) -> str:
         """Ask Plex to scan just this folder. Returns the library's name."""

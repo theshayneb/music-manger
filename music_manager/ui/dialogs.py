@@ -134,6 +134,9 @@ class SettingsDialog(QDialog):
         self.plex_plays = QCheckBox("Show Plex's play counts in the Plays column")
         self.plex_plays.setChecked(settings.plex_plays)
         plex.addRow("", self.plex_plays)
+        self.plex_ratings = QCheckBox("Send ratings changed here to Plex (💣 = 1 star … 🩷 = 5 stars)")
+        self.plex_ratings.setChecked(settings.plex_ratings)
+        plex.addRow("", self.plex_ratings)
         self.plex_refresh = QCheckBox("Ask Plex to rescan the Library folder after Keep and tag changes")
         self.plex_refresh.setChecked(settings.plex_refresh)
         plex.addRow("", self.plex_refresh)
@@ -190,6 +193,7 @@ class SettingsDialog(QDialog):
         s.theme = self.theme.currentData()
         s.plex_url, s.plex_token = self.plex_url.text().strip(), self.plex_token.text().strip()
         s.plex_plays, s.plex_refresh = self.plex_plays.isChecked(), self.plex_refresh.isChecked()
+        s.plex_ratings = self.plex_ratings.isChecked()
         self.accept()
 
 

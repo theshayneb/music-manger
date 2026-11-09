@@ -52,8 +52,13 @@ def fmt_time(seconds: float) -> str:
     return f"{h}:{m:02d}:{s:02d}" if h else f"{m}:{s:02d}"
 
 
+# The rating scale of the Obsidian vault (and Media Manager): one level per star.
+RATING_EMOJI = {1: "💣", 2: "⭐⭐", 3: "⭐⭐⭐", 4: "⭐⭐⭐⭐", 5: "🩷"}
+
+
 def stars(n: int) -> str:
-    return "★" * n if n else ""
+    """A rating as shown everywhere in the app: 💣 / ⭐⭐ / ⭐⭐⭐ / ⭐⭐⭐⭐ / 🩷."""
+    return RATING_EMOJI.get(int(n or 0), "")
 
 
 class TrackModel(QAbstractTableModel):

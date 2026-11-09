@@ -57,6 +57,7 @@ class Settings:
     last_view: str = "review"
     view_modes: dict[str, str] = field(default_factory=lambda: {"review": "list", "library": "albums"})
     album_layout: dict = field(default_factory=dict)
+    album_columns: list[dict] = field(default_factory=list)  # [{"key", "width", "hidden"}] in order
     extra_folders: list[dict] = field(default_factory=list)   # [{"path", "label", "subfolders"}]
     saved_searches: list[dict] = field(default_factory=list)  # [{"label", "source", "search", "missing"}]
     edition_comm: str = ""  # MusicBee custom field that holds "Edition" (learned from the library)
@@ -66,6 +67,7 @@ class Settings:
     plex_url: str = ""          # e.g. http://localhost:32400
     plex_token: str = ""        # X-Plex-Token
     plex_plays: bool = True     # Plays column from Plex
+    plex_ratings: bool = True   # send ratings changed here to Plex (two Plex points per star)
     plex_refresh: bool = True   # ask Plex to rescan the Library folder after Keep and tag changes
     window_geometry: str = ""
     window_state: str = ""
