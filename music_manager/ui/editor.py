@@ -34,7 +34,7 @@ from .flowlayout import FlowLayout
 from .model import stars
 
 MIXED = "(mixed)"
-COVER_SIZE = 150
+COVER_SIZE = 200
 
 
 class RatingStars(QWidget):
@@ -160,28 +160,31 @@ class TagEditor(QWidget):
         outer.addWidget(self.problem)
         outer.addWidget(self.repair_btn)
 
+        # The album art and its buttons live under the Folders list (the window puts art_panel there);
+        # they still belong to this editor, so they always act on the songs being edited.
+        self.art_panel = QWidget()
+        art_box = QVBoxLayout(self.art_panel)
+        art_box.setContentsMargins(0, 0, 0, 0)
+        art_box.setSpacing(4)
         self.cover = QLabel()
         self.cover.setFixedSize(COVER_SIZE, COVER_SIZE)
         self.cover.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self.cover.setStyleSheet("QLabel { border: 1px solid palette(mid); }")
-        # Option A: the cover with small icon buttons beside it.
-        cover_row = QHBoxLayout()
-        cover_row.addStretch(1)
-        cover_row.addWidget(self.cover)
-        art_buttons = QVBoxLayout()
-        art_buttons.setSpacing(2)
-        cover_row.addLayout(art_buttons)
-        cover_row.addStretch(1)
-        outer.addLayout(cover_row)
+        self.cover.setStyleSheet("QLabel { border: 1px solid palette(mid); color: palette(placeholder-text); }")
+        art_box.addWidget(self.cover, 0, Qt.AlignmentFlag.AlignHCenter)
+        art_buttons = QHBoxLayout()
+        art_buttons.setSpacing(4)
+        art_buttons.addStretch(1)
+        art_box.addLayout(art_buttons)
         self.cover_info = QLabel("")
         self.cover_info.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.cover_info.setStyleSheet("color: palette(placeholder-text);")
-        outer.addWidget(self.cover_info)
+        art_box.addWidget(self.cover_info)
         self.cover_info.hide()
+
         def art_button(icon: str, tip: str) -> QToolButton:
             b = QToolButton(text=icon)
             b.setToolTip(tip)
-            b.setFixedSize(30, 28)
+            b.setFixedSize(32, 28)
             art_buttons.addWidget(b)
             return b
 
@@ -437,6 +440,17 @@ class TagEditor(QWidget):
         if len(tracks) > 1 and not new:
             info = f"{sum(t.has_cover for t in tracks)} of {len(tracks)} songs have art"
         self._cover_note(info)
+
+    def preview_cover(self, pixmap: QPixmap | None) -> None:
+        """With no song selected: the playing song's art, just to look at (the buttons stay off)."""
+        if self.tracks:
+            return
+        if pixmap is None or pixmap.isNull():
+            self.cover.setPixmap(QPixmap())
+            self.cover.setText("No album art")
+        else:
+            self.cover.setPixmap(pixmap.scaled(COVER_SIZE, COVER_SIZE, Qt.AspectRatioMode.KeepAspectRatio,
+                                               Qt.TransformationMode.SmoothTransformation))
 
     def _cover_note(self, text: str) -> None:
         """The line under the cover takes no room when it has nothing to say."""

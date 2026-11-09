@@ -218,6 +218,7 @@ class MainWindow(QMainWindow):
         self.addDockWidget(Qt.DockWidgetArea.LeftDockWidgetArea, self.folders_dock)
 
         self.editor = TagEditor()
+        self.now_card.set_art(self.editor.art_panel)  # the art and its buttons sit under the Folders list
         scroll = QScrollArea()
         scroll.setWidgetResizable(True)
         scroll.setWidget(self.editor)
@@ -537,27 +538,27 @@ class MainWindow(QMainWindow):
 
     # ================================================================ under the folders
     def _update_now(self) -> None:
-        """The card shows the song playing; when nothing plays, the selected one."""
-        playing = bool(self.player.path)
-        track = None
-        if playing:
-            row = self.model.row_of(self.player.path)
-            track = self.model.tracks[row] if row >= 0 else self.cache.get(self.player.path)
-        else:
-            selected = self.selected_tracks()
-            track = selected[0] if selected else None
-        if track is not None and self.now_card.path == track.path and self.now_card.heading.text() == (
-                "NOW PLAYING" if playing else "SELECTED"):
-            return  # already showing it
-        self.now_card.show_track(track, playing)
-        if track is None or not track.has_cover:
+        """The card under the Folders list: the selected song (whose art the Tags panel edits); with
+        nothing selected, the playing song's art, just to look at."""
+        selected = self.selected_tracks()
+        if selected:
+            self.now_card.show_track(selected[0], playing=False)
             return
+        if not self.player.path:
+            self.now_card.show_track(None, playing=False)
+            return
+        row = self.model.row_of(self.player.path)
+        track = self.model.tracks[row] if row >= 0 else self.cache.get(self.player.path)
+        if self.now_card.path == track.path and self.now_card.playing:
+            return
+        self.now_card.show_track(track, playing=True)
         path = track.path
 
         def done(image, _err) -> None:  # type: ignore[no-untyped-def]
             from PySide6.QtGui import QPixmap
 
-            self.now_card.set_cover(path, QPixmap.fromImage(image) if image is not None else None)
+            if self.now_card.path == path and not self.selected_tracks():
+                self.editor.preview_cover(QPixmap.fromImage(image) if image is not None else None)
 
         self.cover_bg.run(lambda: thumbnail(path, 400), done)
 

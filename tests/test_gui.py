@@ -348,9 +348,11 @@ def test_folders_panel_card_and_checkup(app, song, tmp_path):
     n = {k: v.text() for k, v in window.checkup.numbers.items()}
     assert (n["songs"], n["cover"], n["lyrics"], n["synced"], n["tags"]) == ("2", "1", "1", "1", "1")
     window._select_path(str(a))
-    wait(app, window, 2, until=lambda: window.now_card.cover.pixmap() is not None
-         and not window.now_card.cover.pixmap().isNull())
+    wait(app, window, 2, until=lambda: window.editor.cover.pixmap() is not None
+         and not window.editor.cover.pixmap().isNull())
     assert window.now_card.heading.text() == "SELECTED" and "A" in window.now_card.text.text()
+    # The art and its buttons are the Tags panel's own, shown under the Folders list.
+    assert window.editor.art_panel.parentWidget() is window.now_card and window.editor.art_paste.isEnabled()
     window._open_check("library", "cover")
     wait(app, window, 1)
     assert window.show_filter.currentData() == "cover" and window.proxy.rowCount() == 1

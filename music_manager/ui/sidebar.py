@@ -7,13 +7,10 @@ import os
 import time
 
 from PySide6.QtCore import Qt, Signal
-from PySide6.QtGui import QPixmap
 from PySide6.QtWidgets import QGridLayout, QLabel, QVBoxLayout, QWidget
 
 from ..core.tags import Track
 from .model import fmt_time, stars
-
-CARD_ART = 190
 
 # (key, label, Show filter it opens, in which view)
 CHECKS = [
@@ -64,34 +61,34 @@ def _section(text: str) -> QLabel:
 
 
 class NowCard(QWidget):
-    """The cover of the song playing, else of the selected song, with its title and details."""
+    """Under the Folders list: the selected song's album art with its buttons (the Tags panel's own,
+    so they change the song being edited), its title and details. With nothing selected, the
+    playing song's art, just to look at."""
 
     def __init__(self, parent: QWidget | None = None):
         super().__init__(parent)
-        layout = QVBoxLayout(self)
-        layout.setContentsMargins(4, 0, 4, 0)
-        layout.setSpacing(3)
-        self.heading = _section("NOW PLAYING")
-        layout.addWidget(self.heading)
-        self.cover = QLabel()
-        self.cover.setFixedSize(CARD_ART, CARD_ART)
-        self.cover.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self.cover.setStyleSheet("QLabel { border: 1px solid palette(mid); color: palette(placeholder-text); }")
-        layout.addWidget(self.cover, 0, Qt.AlignmentFlag.AlignHCenter)
+        self.box = QVBoxLayout(self)
+        self.box.setContentsMargins(4, 0, 4, 0)
+        self.box.setSpacing(3)
+        self.heading = _section("SELECTED")
+        self.box.addWidget(self.heading)
+        self.art_slot = QVBoxLayout()
+        self.box.addLayout(self.art_slot)
         self.text = QLabel("")
         self.text.setWordWrap(True)
         self.text.setTextFormat(Qt.TextFormat.RichText)
-        layout.addWidget(self.text)
+        self.box.addWidget(self.text)
         self.path = ""
-        self.show_track(None, playing=False)
+        self.playing = False
+
+    def set_art(self, art_panel: QWidget) -> None:
+        self.art_slot.addWidget(art_panel)
 
     def show_track(self, track: Track | None, playing: bool) -> None:
         self.heading.setText("NOW PLAYING" if playing else "SELECTED")
-        self.path = track.path if track else ""
+        self.path, self.playing = (track.path if track else ""), playing
         if track is None:
-            self.cover.setPixmap(QPixmap())
-            self.cover.setText("Nothing selected")
-            self.text.setText("")
+            self.text.setText("<span style='color:#9aa0a8'>Select a song</span>")
             return
         import html
 
@@ -103,19 +100,6 @@ class NowCard(QWidget):
             f"<b>{html.escape(track.title or track.name)}</b><br>"
             f"<span style='color:#9aa0a8'>{html.escape(' · '.join(x for x in (track.artist, album) if x))}</span>"
             + (f"<br><span style='color:#9aa0a8'>{html.escape(extra)}</span>" if extra else ""))
-        if not track.has_cover:
-            self.cover.setPixmap(QPixmap())
-            self.cover.setText("No album art")
-
-    def set_cover(self, path: str, pixmap: QPixmap | None) -> None:
-        if path != self.path:
-            return  # another song was picked meanwhile
-        if pixmap is None or pixmap.isNull():
-            self.cover.setPixmap(QPixmap())
-            self.cover.setText("No album art")
-            return
-        self.cover.setPixmap(pixmap.scaled(CARD_ART, CARD_ART, Qt.AspectRatioMode.KeepAspectRatio,
-                                           Qt.TransformationMode.SmoothTransformation))
 
 
 def track_plays(t: Track) -> int:

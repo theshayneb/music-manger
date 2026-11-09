@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.7.1
+
+- The **album art and its five buttons** (from file, copy, paste, remove, save as) **moved out of the Tags panel**
+  to under the Folders list, with the buttons in a row under the art. They show the selected song, the one the
+  Tags panel is editing, so the buttons always change that song. With nothing selected, the playing song's art
+  is shown (buttons off). The Tags panel now starts with the tags. (0.7.0 showed the art twice.)
+
 ## 0.7.0
 
 - Under the Folders list:
