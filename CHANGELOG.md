@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.7.3
+
+- Fixed: a gap under Rating in the Standard tab. The Obsidian tag chips in the Extra tab set the height of every
+  tab; now each tab is exactly as tall as what's in it.
+- Fixed: the song's file name at the top of the Tags panel took one line on some tabs and two on others. It's
+  always one line now, shortened in the middle with "…" when it doesn't fit (hover for the whole name).
+- **📁 Add Folder ▾** and the location of the folder being shown moved from the Folders panel to the toolbar.
+
 ## 0.7.2
 
 - The Tags panel's tabs are only as tall as the tab that's open (no empty space under Rating).

@@ -42,7 +42,7 @@ from ..core.settings import Settings
 from ..core.tags import Track
 from .albums import AlbumModel, AlbumTable, ArtDelegate, thumbnail
 from .dialogs import PlanDialog, SettingsDialog, ask_text
-from .editor import TagEditor
+from .editor import ElidedLabel, TagEditor
 from .jump import JumpBar, JumpTable, Typed, find
 from .lookup import LookupDialog, net
 from .lyrics_review import Found, LyricsReview
@@ -115,7 +115,7 @@ class MainWindow(QMainWindow):
         self.views.customContextMenuRequested.connect(self._views_menu)
         self._fill_views()
         self.add_view_btn = QToolButton()
-        self.add_view_btn.setText("＋ Add ▾")
+        self.add_view_btn.setText("📁 Add Folder ▾")
         self.add_view_btn.setStyleSheet("QToolButton::menu-indicator { image: none; width: 0px; }")
         self.add_view_btn.setToolTip("Add a folder, or save the current search (e.g. Library songs with no album art)")
         self.add_view_btn.setPopupMode(QToolButton.ToolButtonPopupMode.InstantPopup)
@@ -123,15 +123,15 @@ class MainWindow(QMainWindow):
         add_menu.addAction("Add a folder…", self.add_folder_view)
         add_menu.addAction("Save the current search and Show filter…", self.save_search_view)
         self.add_view_btn.setMenu(add_menu)
-        self.view_hint = QLabel("")
-        self.view_hint.setWordWrap(True)
-        self.view_hint.setStyleSheet("color: palette(placeholder-text); padding: 4px;")
+        # The folder being shown, in the toolbar (one line; the whole path in the tooltip).
+        self.view_hint = ElidedLabel("")
+        self.view_hint.setFixedWidth(280)  # a toolbar gives a stretchy label no room, so: a set width
+        self.view_hint.setSizePolicy(QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Fixed)
+        self.view_hint.setStyleSheet("color: palette(placeholder-text); padding: 0 6px;")
         left = QWidget()
         lv = QVBoxLayout(left)
         lv.setContentsMargins(0, 0, 0, 0)
         lv.addWidget(self.views)
-        lv.addWidget(self.add_view_btn)
-        lv.addWidget(self.view_hint)
         # Under the folders: the cover of the song playing (or selected), then the Library check-up.
         self.now_card = NowCard()
         lv.addWidget(self.now_card)
@@ -321,6 +321,8 @@ class MainWindow(QMainWindow):
         self.layout_menu = QMenu(self)
         self.layout_menu.aboutToShow.connect(self._fill_layout_menu)
         self.layout_btn.setMenu(self.layout_menu)
+        bar.addWidget(self.view_hint)
+        bar.addWidget(self.add_view_btn)
         bar.addWidget(self.layout_btn)
         action("⟳ Refresh", lambda: (self.reload(), self.refresh_plex_plays()), "F5",
                "Read the folder again (and Plex's play counts)")
@@ -438,7 +440,6 @@ class MainWindow(QMainWindow):
         if across:
             self.views.setFixedHeight(self.views.sizeHintForRow(0) + 8)
             self.views.setMaximumWidth(260)
-            self.view_hint.hide()
             self.now_card.hide()
             self.checkup.hide()
             self._folders_left.setMaximumWidth(16777215)
@@ -446,7 +447,6 @@ class MainWindow(QMainWindow):
         else:
             self.views.setFixedHeight(min(10, self.views.count()) * max(28, self.views.sizeHintForRow(0)) + 8)
             self.views.setMaximumWidth(220)
-            self.view_hint.show()
             self.now_card.show()
             self.checkup.show()
             self._folders_left.setMaximumWidth(220)

@@ -12,6 +12,7 @@ from PySide6.QtWidgets import (
     QComboBox,
     QFileDialog,
     QFormLayout,
+    QFrame,
     QGridLayout,
     QHBoxLayout,
     QHeaderView,
@@ -20,9 +21,9 @@ from PySide6.QtWidgets import (
     QPlainTextEdit,
     QPushButton,
     QSizePolicy,
+    QTabBar,
     QTableWidget,
     QTableWidgetItem,
-    QTabWidget,
     QToolButton,
     QVBoxLayout,
     QWidget,
@@ -133,6 +134,85 @@ CHOICE_FIELDS = ("genre", "language", "tempo", "album_type")
 COVER_MIME = "application/x-music-manager-cover"
 
 
+class TabPages(QWidget):
+    """Tabs whose height is the open page's (a QTabWidget is as tall as its tallest page, and pages
+    that wrap, like the Obsidian tag chips, made the Standard tab too tall). Only the open page is
+    in the layout; the others are hidden."""
+
+    currentChanged = Signal(int)
+
+    def __init__(self, parent: QWidget | None = None):
+        super().__init__(parent)
+        box = QVBoxLayout(self)
+        box.setContentsMargins(0, 0, 0, 0)
+        box.setSpacing(0)
+        self.bar = QTabBar()
+        self.bar.setDrawBase(False)
+        self.bar.setExpanding(False)
+        box.addWidget(self.bar)
+        self.frame = QFrame()
+        self.frame.setObjectName("tabframe")
+        self.frame.setStyleSheet("QFrame#tabframe { border: 1px solid palette(mid); background: palette(window); }")
+        self.pages_box = QVBoxLayout(self.frame)
+        self.pages_box.setContentsMargins(0, 0, 0, 0)
+        box.addWidget(self.frame)
+        self.pages: list[QWidget] = []
+        self.bar.currentChanged.connect(self._switch)
+
+    def addTab(self, page: QWidget, label: str) -> None:  # noqa: N802 - like QTabWidget
+        self.pages.append(page)
+        self.pages_box.addWidget(page)
+        page.setVisible(len(self.pages) == 1)
+        self.bar.addTab(label)
+
+    def _switch(self, index: int) -> None:
+        for i, page in enumerate(self.pages):
+            page.setVisible(i == index)
+        self.currentChanged.emit(index)
+
+    def setCurrentIndex(self, index: int) -> None:  # noqa: N802
+        self.bar.setCurrentIndex(index)
+
+    def currentIndex(self) -> int:  # noqa: N802
+        return self.bar.currentIndex()
+
+    def setTabText(self, index: int, text: str) -> None:  # noqa: N802
+        self.bar.setTabText(index, text)
+
+    def count(self) -> int:
+        return len(self.pages)
+
+    def widget(self, index: int) -> QWidget:
+        return self.pages[index]
+
+
+class ElidedLabel(QLabel):
+    """One line; a name too long for the width ends in "…" (the whole name is in the tooltip)."""
+
+    def __init__(self, text: str = "", parent: QWidget | None = None):
+        super().__init__(parent)
+        self._full = ""
+        self.setMinimumWidth(10)
+        self.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Fixed)
+        self.setText(text)
+
+    def setText(self, text: str) -> None:  # noqa: N802
+        self._full = text
+        self.setToolTip(text)
+        self._elide()
+
+    def text(self) -> str:
+        return self._full
+
+    def resizeEvent(self, event) -> None:  # type: ignore[no-untyped-def]  # noqa: N802
+        super().resizeEvent(event)
+        self._elide()
+
+    def _elide(self) -> None:
+        width = max(10, self.contentsRect().width() - 2)
+        super().setText(self.fontMetrics().elidedText(self._full, Qt.TextElideMode.ElideMiddle, width))
+
+
 class TagEditor(QWidget):
     save_requested = Signal(list, dict)  # paths, changes
     rating_requested = Signal(list, int)  # paths, stars (saved straight away)
@@ -148,8 +228,7 @@ class TagEditor(QWidget):
         outer = QVBoxLayout(self)
         outer.setContentsMargins(8, 8, 8, 8)
 
-        self.heading = QLabel("No song selected")
-        self.heading.setWordWrap(True)
+        self.heading = ElidedLabel("No song selected")
         self.heading.setStyleSheet("font-weight: 600;")
         outer.addWidget(self.heading)
         self.problem = QLabel("")
@@ -196,7 +275,7 @@ class TagEditor(QWidget):
         art_buttons.addStretch(1)
 
         # Two tabs, so the panel stays short: the tags every song needs, and the extra ones.
-        self.tag_tabs = QTabWidget()
+        self.tag_tabs = TabPages()
         standard, extra = QWidget(), QWidget()
         form = QFormLayout(standard)
         more = QFormLayout(extra)
@@ -278,9 +357,7 @@ class TagEditor(QWidget):
         other_box.addWidget(self.extra)
         self.tag_tabs.addTab(other, "Other")
         outer.addWidget(self.tag_tabs)
-        # A tab panel is as tall as its tallest page; make it only as tall as the page that's open.
-        self.tag_tabs.currentChanged.connect(self._fit_tabs)
-        self._fit_tabs(0)
+
         lookups = QHBoxLayout()
         self.lookup_btn = QPushButton("🔎 Look up online")
         self.lookup_btn.setToolTip("Tags, album art and lyrics from iTunes, MusicBrainz, Deezer and more (Ctrl+L)")
@@ -443,14 +520,6 @@ class TagEditor(QWidget):
         if len(tracks) > 1 and not new:
             info = f"{sum(t.has_cover for t in tracks)} of {len(tracks)} songs have art"
         self._cover_note(info)
-
-    def _fit_tabs(self, index: int) -> None:
-        for i in range(self.tag_tabs.count()):
-            policy = QSizePolicy.Policy.Preferred if i == index else QSizePolicy.Policy.Ignored
-            self.tag_tabs.widget(i).setSizePolicy(policy, policy)
-        self.tag_tabs.widget(index).adjustSize()
-        self.tag_tabs.adjustSize()
-        self.tag_tabs.updateGeometry()
 
     def preview_cover(self, pixmap: QPixmap | None) -> None:
         """With no song selected: the playing song's art, just to look at (the buttons stay off)."""
