@@ -47,8 +47,27 @@ def same_text(value: str) -> str:
     return " ".join(text.split())
 
 
+VARIOUS = {"various artists", "various", "va", "v.a.", "various artist"}
+
+
+def is_various(t: Track) -> bool:
+    return (t.album_artist or "").strip().casefold() in VARIOUS
+
+
 def album_artist(t: Track) -> str:
+    """Who a song is grouped and sorted under: its Album Artist, except that "Various Artists"
+    compilations go under each song's own Artist."""
+    if is_various(t):
+        return (t.artist or t.album_artist or "").strip()
     return (t.album_artist or t.artist or "").strip()
+
+
+def sort_name(t: Track) -> str:
+    """What a song sorts by: its Sort Artist, unless that's for a "Various Artists" album (then
+    the song's own Artist)."""
+    if is_various(t):
+        return album_artist(t)
+    return t.sort_artist or album_artist(t)
 
 
 def artist_sort_key(name: str) -> str:
@@ -152,8 +171,8 @@ def build(tracks: list[Track], group_by: str = "artist", order: str = "year", si
         by_album.setdefault((same_text(album_artist(t)), same_text(t.album)), []).append(t)
     albums = []
     for (artist_key, album_key), ts in by_album.items():
-        sorts = Counter(t.sort_artist for t in ts if t.sort_artist)
-        sort = artist_sort_key(sorts.most_common(1)[0][0] if sorts else album_artist(ts[0]))
+        sorts = Counter(sort_name(t) for t in ts)
+        sort = artist_sort_key(sorts.most_common(1)[0][0])
         albums.append(make_album((sort, artist_key, album_key), ts, sides))
 
     def album_order(a: Album):  # type: ignore[no-untyped-def]

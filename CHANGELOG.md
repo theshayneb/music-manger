@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.7.5
+
+- Songs whose Album Artist is **"Various Artists"** are grouped and sorted under their own **Artist** in the
+  album view and the jump bar (a compilation's songs show under each artist, with that compilation's cover).
+  The files' tags aren't changed.
+
 ## 0.7.4
 
 - Fixed: 0.7.3 made the Tags panel's tab area darker (its tabs were drawn by the app instead of by Qt). They're

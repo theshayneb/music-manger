@@ -101,3 +101,14 @@ def test_albums_by_year_even_with_different_sort_artists():
              t("Do It Again", "01", album="20/20", year="1969", artist="The Beach Boys", album_artist="The Beach Boys")]
     [section] = albums.build(songs)
     assert [a.title for a in section.albums] == ["20/20", "That's Why God Made the Radio"]
+
+
+def test_various_artists_go_under_each_songs_artist():
+    songs = [t("Hey Ya!", "01", album="Now 15", artist="OutKast", album_artist="Various Artists",
+               sort_artist="Various Artists"),
+             t("Toxic", "02", album="Now 15", artist="Britney Spears", album_artist="Various Artists"),
+             t("Ms. Jackson", "05", album="Stankonia", artist="OutKast", album_artist="OutKast")]
+    sections = albums.build(songs)
+    assert [s.heading for s in sections] == ["Britney Spears", "OutKast"]
+    outkast = sections[1]
+    assert sorted(a.title for a in outkast.albums) == ["Now 15", "Stankonia"]

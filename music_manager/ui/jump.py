@@ -13,14 +13,14 @@ import time
 from PySide6.QtCore import Qt, Signal
 from PySide6.QtWidgets import QHBoxLayout, QTableView, QToolButton, QWidget
 
-from ..core.albums import artist_sort_key
+from ..core.albums import artist_sort_key, sort_name
 from ..core.tags import Track
 
 AGAIN_SECONDS = 2.0
 
 
 def jump_key(t: Track) -> str:
-    return artist_sort_key(t.sort_artist or t.album_artist or t.artist or t.title or t.name)
+    return artist_sort_key(sort_name(t) or t.title or t.name)
 
 
 def find(tracks: list[Track], prefix: str) -> int:
