@@ -57,9 +57,12 @@ def empties(d: Details) -> list[str]:
 class KeepReview(QDialog):
     """exec() accepted = carry on with Keep. Rejected with .fix set = the song to fix first."""
 
-    def __init__(self, details: list[Details], parent: QWidget | None = None):
+    def __init__(self, details: list[Details], parent: QWidget | None = None,
+                 becomes: dict[str, str] | None = None):
+        """becomes: {song's path: what Keep will make of it} (folder and new name)."""
         super().__init__(parent)
         self.details = details
+        self.becomes = becomes or {}
         self.fix: str | None = None
         self.setWindowTitle(f"Check before keeping — {len(details)} song{'s' if len(details) != 1 else ''}")
         self.resize(980, 720)
@@ -132,7 +135,19 @@ class KeepReview(QDialog):
                 name.setStyleSheet("color: #e0a040;")
             form.addRow(name, text)
         info = f"{t.format}, {t.bitrate} kbps" + (" (will be converted to MP3)" if t.format != "MP3" else "")
-        form.addRow("File", QLabel(f"{t.name}\n{info}"))
+        becomes = self.becomes.get(t.path)
+        if becomes:
+            import html
+            import os
+
+            where = os.path.join(os.path.basename(os.path.dirname(becomes)), os.path.basename(becomes))
+            file_text = QLabel(f"<b>Becomes: {html.escape(where)}</b><br>"
+                               f"<span style='color:#9aa0a8'>Now: {html.escape(t.name)}<br>{html.escape(info)}</span>")
+            file_text.setToolTip(becomes)
+        else:
+            file_text = QLabel(f"{t.name}\n{info}")
+        file_text.setWordWrap(True)
+        form.addRow("File", file_text)
         top.addLayout(form, 1)
         outer.addLayout(top)
         title = QLabel("Lyrics" if d.lyrics.strip() else f"{WARN} Lyrics: none")

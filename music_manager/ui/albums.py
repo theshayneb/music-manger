@@ -205,6 +205,8 @@ class AlbumModel(QAbstractTableModel):
             if t.error:
                 return f"Couldn't read this file: {t.error}"
             return t.path if key == "name" else None
+        if role == Qt.ItemDataRole.TextAlignmentRole and key in ("lyrics", "cover"):
+            return int(Qt.AlignmentFlag.AlignCenter)
         if role == Qt.ItemDataRole.TextAlignmentRole and key in ("length", "bitrate", "year", "gain", "plays"):
             return int(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
         return None

@@ -357,3 +357,24 @@ def test_folders_panel_card_and_checkup(app, song, tmp_path):
     wait(app, window, 1)
     assert window.show_filter.currentData() == "cover" and window.proxy.rowCount() == 1
     window.close()
+
+
+def test_genre_from_the_artists_other_songs_and_suggestions(app, song):
+    from music_manager.ui.editor import TagEditor
+
+    path = song("x.mp3")
+    tags.write(str(path), {"title": "New one", "artist": "Common Rider"})
+    d = tags.read(str(path), with_details=True)
+    editor = TagEditor()
+    editor.set_artist_genres({"common rider": "Reggae/Ska"})
+    editor.set_choices({"artist": ["Common Rider", "Operation Ivy"], "tempo": ["Very Slow", "Slow", "Moderate"]})
+    editor.show_tracks([d.track], d)
+    assert editor.edits["genre"].text() == "Reggae/Ska" and editor.changed == {"genre": "Reggae/Ska"}
+    completer = editor.edits["artist"].completer()
+    completer.setCompletionPrefix("rider")
+    assert completer.currentCompletion() == "Common Rider"  # matches anywhere in the name, any case
+    # A song that has a genre keeps it.
+    tags.write(str(path), {"genre": "Punk"})
+    d = tags.read(str(path), with_details=True)
+    editor.show_tracks([d.track], d, keep_pending=False)
+    assert editor.edits["genre"].text() == "Punk" and not editor.changed

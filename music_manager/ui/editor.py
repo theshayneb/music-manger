@@ -10,6 +10,7 @@ from PySide6.QtCore import QByteArray, Qt, Signal
 from PySide6.QtGui import QGuiApplication, QImage, QPixmap
 from PySide6.QtWidgets import (
     QComboBox,
+    QCompleter,
     QFileDialog,
     QFormLayout,
     QGridLayout,
@@ -97,6 +98,7 @@ class ComboField(QComboBox):
         completer = self.completer()
         completer.setCaseSensitivity(Qt.CaseSensitivity.CaseInsensitive)
         completer.setFilterMode(Qt.MatchFlag.MatchContains)
+        completer.setCompletionMode(QCompleter.CompletionMode.PopupCompletion)  # suggestions while typing
 
     def wheelEvent(self, event) -> None:  # type: ignore[no-untyped-def]  # noqa: N802
         # Scrolling over the Tags panel scrolls the panel, not the value (unless you're in this box).
@@ -280,7 +282,10 @@ class TagEditor(QWidget):
             more.addRow(tags.FIELD_LABELS[key], field(key))
         self.edits["album_type"].setToolTip("e.g. album, single, ep, compilation, live, or album;live. Saved as "
                                             "both MusicBrainz Album Type and RELEASETYPE, kept the same.")
-        self.edits["genre"].setToolTip("Several genres: separate them with ;")
+        self.edits["genre"].setToolTip("Several genres: separate them with ;. A song with none gets the genre "
+                                       "your other songs by the same artist have.")
+        self._auto_genre = ""
+        self.edits["artist"].editingFinished.connect(self._fill_genre)
         self.edits["tempo"].setToolTip("MusicBee's Tempo field (e.g. Slow, Medium, Fast)")
         self.edits["original_artist"].setToolTip("Who first recorded it (for a cover). Several: separate with ;")
         self.edits["original_year"].setToolTip("The year it first came out")
@@ -419,6 +424,7 @@ class TagEditor(QWidget):
         self.rating.set_value(next(iter(ratings)) if len(ratings) == 1 else 0, mixed=len(ratings) > 1)
         self.rating.setEnabled(writable)
         self._update_chips()
+        self._auto_genre = ""
         self.lyrics.setEnabled(writable and not many)
         if many:
             self.lyrics.setPlainText("")
@@ -462,6 +468,8 @@ class TagEditor(QWidget):
         self._loading = False
         if pending:
             self._put_back(pending)
+        elif writable and tracks and all(not t.genre for t in tracks) and not any(t.error for t in tracks):
+            self._fill_genre()
 
     def _put_back(self, pending: dict) -> None:
         """Typed-but-unsaved values back into their boxes (and still marked as changes)."""
@@ -682,13 +690,45 @@ class TagEditor(QWidget):
         self._mark()
 
     def set_choices(self, choices: dict[str, list[str]]) -> None:
-        """The values offered in the Genre, Language and Tempo drop-downs, and the Obsidian tag chips."""
+        """The values offered in the Genre, Language and Tempo drop-downs, the suggestions while typing
+        an Artist, Album Artist, Album (…), and the Obsidian tag chips."""
         for key, values in choices.items():
             edit = self.edits.get(key)
             if isinstance(edit, ComboField):
                 edit.set_choices(values)
+            elif isinstance(edit, QLineEdit) and not isinstance(edit, TagsField):
+                completer = QCompleter(values, edit)
+                completer.setCaseSensitivity(Qt.CaseSensitivity.CaseInsensitive)
+                completer.setFilterMode(Qt.MatchFlag.MatchContains)
+                completer.setMaxVisibleItems(12)
+                # Picking a suggestion counts as typing it.
+                completer.activated.connect(lambda text, key=key: self._edited(key, text))
+                edit.setCompleter(completer)
         if "obsidian_tags" in choices:
             self._set_chips(choices["obsidian_tags"])
+
+    # ------------------------------------------------------------ Genre from the artist's other songs
+    def set_artist_genres(self, genres: dict[str, str]) -> None:
+        """{artist (any case): the genre most of their songs have}."""
+        self.artist_genres = genres
+
+    def _fill_genre(self) -> None:
+        """A song (or songs) without a Genre gets the genre the artist's other songs have, ready to Save."""
+        genre_edit = self.edits["genre"]
+        if not self.tracks or not genre_edit.isEnabled():
+            return
+        current = genre_edit.text().strip()
+        if current and current != self._auto_genre:
+            return  # you've got one (or typed one): left alone
+        artist = self.edits["artist"].text().strip()
+        if not artist:
+            artists = {t.artist.strip().casefold() for t in self.tracks}
+            artist = next(iter(artists)) if len(artists) == 1 else ""
+        genre = getattr(self, "artist_genres", {}).get(artist.casefold(), "")
+        if genre and genre != current:
+            self.apply_field("genre", genre)
+            self._auto_genre = genre
+            self.status.setText(f"Genre from your other songs by {artist} (not saved yet)")
 
     # ------------------------------------------------------------ Obsidian tag chips
     # Style A: brighter text on a filled pill; the song's tags in solid blue and bold.

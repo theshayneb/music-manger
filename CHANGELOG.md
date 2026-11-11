@@ -1,5 +1,21 @@
 # Changelog
 
+## 0.8.0
+
+- The Keep review shows what each song will become: **Becomes: Music\Artist - Title.mp3**, with its current
+  name under it.
+- **Genre from the artist's other songs**: a song with no Genre gets the genre most of your other songs by the
+  same Artist have (also when you type an Artist), ready to Save. Moving on without saving it just drops it.
+- **Suggestions while typing** Artist, Album Artist, Album, Original Artist and Original Album: names already in
+  your library that contain what you've typed (any case). Genre, Language, Tempo and Album Type suggest the same way.
+- **Tempo** drop-down in the order Very Slow, Slow, Moderate, Fast, Very Fast (then any others you use).
+- The ✓ in the Lyrics and Art columns is centred.
+- Fixed: saving tags of the song that's playing made it pause for a moment. The tags are now written while it
+  keeps playing (only if Windows won't allow that is it paused briefly, as before).
+- Fixed: Keep restarted the song that was playing even when another song was kept. Now only keeping the song that's
+  playing moves on to the next one.
+- A song now starts once its file has loaded, from 0:00 (the first moment could be lost before).
+
 ## 0.7.5
 
 - Songs whose Album Artist is **"Various Artists"** are grouped and sorted under their own **Artist** in the

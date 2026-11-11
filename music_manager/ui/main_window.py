@@ -1003,6 +1003,9 @@ class MainWindow(QMainWindow):
         """Unsaved tag edits: save them, throw them away, or stay. True = carry on."""
         if not self.editor.has_unsaved():
             return True
+        if self.editor.changed == {"genre": self.editor._auto_genre}:
+            self.editor.changed = {}  # only the Genre the app filled in: no need to ask
+            return True
         names = ", ".join(t.name for t in self.editor.tracks[:3])
         box = QMessageBox(QMessageBox.Icon.Question, "Unsaved tags", f"Save your changes to {names}?",
                           QMessageBox.StandardButton.Save | QMessageBox.StandardButton.Discard, self)
@@ -1096,8 +1099,21 @@ class MainWindow(QMainWindow):
     def _update_choices(self) -> None:
         """Genre, Language and Tempo drop-downs: every value used in either folder (from the tag cache)."""
         found: dict[str, dict[str, str]] = {"genre": {}, "language": {}, "tempo": {}, "obsidian_tags": {},
-                                            "album_type": {t.casefold(): t for t in tags.ALBUM_TYPES}}
-        tracks = [t.to_dict() for t in self.model.tracks] + list(self.cache._items.values())
+                                            "album_type": {t.casefold(): t for t in tags.ALBUM_TYPES},
+                                            "artist": {}, "album_artist": {}, "album": {},
+                                            "original_artist": {}, "original_album": {}}
+        with self.cache._lock:
+            cached = list(self.cache._items.values())
+        tracks = [t.to_dict() for t in self.model.tracks] + cached
+        # Each artist's usual genre (to fill in Genre for a song by them that has none).
+        from collections import Counter
+
+        genres_by_artist: dict[str, Counter] = {}
+        for item in tracks:
+            artist, genre = str(item.get("artist") or "").strip(), str(item.get("genre") or "").strip()
+            if artist and genre:
+                genres_by_artist.setdefault(artist.casefold(), Counter())[genre] += 1
+        self.editor.set_artist_genres({a: c.most_common(1)[0][0] for a, c in genres_by_artist.items()})
         for item in tracks:
             for key, values in found.items():
                 many = key in ("genre", "obsidian_tags")
@@ -1107,43 +1123,62 @@ class MainWindow(QMainWindow):
                     if part:
                         values.setdefault(part.casefold(), part)
         choices = {k: sorted(v.values(), key=str.casefold) for k, v in found.items()}
+        # Tempo: slowest to fastest, then any others the library has.
+        usual_tempos = ["Very Slow", "Slow", "Moderate", "Fast", "Very Fast"]
+        choices["tempo"] = usual_tempos + [v for v in choices["tempo"] if v.casefold() not in
+                                           {u.casefold() for u in usual_tempos}]
         # Album types: the usual ones in their usual order, then any others the library has.
         usual = [t for t in tags.ALBUM_TYPES]
         choices["album_type"] = usual + [v for v in choices["album_type"] if v.casefold() not in
                                          {u.casefold() for u in usual}]
         self.editor.set_choices(choices)
 
-    def save_tags(self, paths: list[str], changes: dict) -> None:
+    def save_tags(self, paths: list[str], changes: dict, released: tuple | None = None) -> None:
+        """Write tags in the background. The playing song keeps playing: its file is only let go of
+        (a short pause) if Windows won't let the tags be written while it plays."""
         if not paths or not changes:
             return
-        state = self._release(paths)
-        # Only what's being saved stops being "not saved": other boxes you've typed in keep their changes.
-        for key, value in changes.items():
-            if self.editor.changed.get(key) == value:
-                del self.editor.changed[key]
+        if released is None:
+            # Only what's being saved stops being "not saved": other boxes you've typed in keep their changes.
+            for key, value in changes.items():
+                if self.editor.changed.get(key) == value:
+                    del self.editor.changed[key]
         self.status.setText(f"Saving tags of {len(paths)} song{'s' if len(paths) != 1 else ''}…")
+        playing = self.player.path
 
-        def work() -> list[tuple[str, str]]:
-            failures = []
+        def work() -> tuple[list[tuple[str, str]], list[str]]:
+            failures, in_use = [], []
             for path in paths:
                 try:
                     tags.write(path, changes)
+                except PermissionError as exc:
+                    if released is None and playing and fileops.same_path(path, playing):
+                        in_use.append(path)  # try again once the player has let go of it
+                    else:
+                        failures.append((path, str(exc)))
                 except Exception as exc:  # noqa: BLE001
                     failures.append((path, str(exc)))
-            return failures
+            return failures, in_use
 
-        def done(failures, error) -> None:  # type: ignore[no-untyped-def]
-            self._resume(state)
-            self._report("Saved tags", len(paths), failures, error)
+        def done(result, error) -> None:  # type: ignore[no-untyped-def]
+            failures, in_use = result or ([], [])
+            if in_use:
+                self.save_tags(in_use, changes, released=self._release(in_use) or ())
+            if released:
+                self._resume(released)
+            saved = [p for p in paths if p not in in_use]
+            if not saved and not failures:
+                return
+            self._report("Saved tags", len(saved) - len(failures), failures, error)
             self._mark_others_stale()
             if "rating" in changes:
-                self.send_ratings_to_plex([p for p in paths if p not in {f for f, _e in (failures or [])}],
+                self.send_ratings_to_plex([p for p in saved if p not in {f for f, _e in (failures or [])}],
                                           int(changes["rating"]))
             library = self.settings.library_folder
             if library and any(fileops.same_path(os.path.dirname(p), library) or
-                               os.path.normcase(p).startswith(os.path.normcase(library) + os.sep) for p in paths):
+                               os.path.normcase(p).startswith(os.path.normcase(library) + os.sep) for p in saved):
                 self.plex_rescan_soon()
-            self._refresh_tracks({p: p for p in paths})
+            self._refresh_tracks({p: p for p in saved})
 
         self.bg.run(work, done)
 
@@ -1246,7 +1281,8 @@ class MainWindow(QMainWindow):
             return
         # First a last look at everything each song has (⚠ for what's empty)...
         details = [tags.read(t.path, with_details=True) for t in tracks]
-        review = KeepReview(details, self)
+        planned = {t.path: dest for t, dest, _n in keep.plan(tracks, self.settings) if dest}
+        review = KeepReview(details, self, becomes=planned)
         if review.exec() != QDialog.DialogCode.Accepted:
             if review.fix:
                 self._select_path(review.fix)
@@ -1267,9 +1303,12 @@ class MainWindow(QMainWindow):
             self.settings.rename_pattern = dialog.current_pattern()
         overwrite = dialog.chosen().get("overwrite", False)
         rows = [(t, dest) for t, dest, _note in dialog.rows if dest]
-        playing = self.player.is_playing()
-        next_row = self._row_after([t.path for t, _ in rows])
-        self._release([t.path for t, _ in rows])
+        # Only when the song being kept is the one playing does the next one start; any other song
+        # that's playing is left alone.
+        kept_paths = [t.path for t, _ in rows]
+        playing = self.player.is_playing() and any(fileops.same_path(self.player.path, p) for p in kept_paths)
+        next_row = self._row_after(kept_paths)
+        self._release(kept_paths)
         self._run_each(
             "Keeping", rows,
             lambda item: keep.keep_one(self.ffmpeg, item[0], item[1], self.settings, overwrite),

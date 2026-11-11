@@ -93,8 +93,13 @@ class PlayerBar(QWidget):
         self.path = path
         self.now_label.setText(title)
         self.now_label.setToolTip(path)
+        # Start only once the file has loaded, from 0:00: starting straight away could lose the first
+        # moment of the song while the file was still opening.
+        self._resume_at = (0, True)
         self.player.setSource(QUrl.fromLocalFile(path))
-        self.player.play()
+        if self.player.mediaStatus() in (QMediaPlayer.MediaStatus.LoadedMedia,
+                                         QMediaPlayer.MediaStatus.BufferedMedia):
+            self._apply_resume()
 
     def toggle(self) -> None:
         if not self.player:
