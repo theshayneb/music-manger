@@ -11,6 +11,8 @@ from PySide6.QtWidgets import QHBoxLayout, QLabel, QSlider, QToolButton, QWidget
 
 from .model import fmt_time
 
+WARM_UP_MS = 250
+
 try:
     from PySide6.QtMultimedia import QAudioOutput, QMediaPlayer
 
@@ -30,6 +32,13 @@ class PlayerBar(QWidget):
         self.path = ""
         self._seeking = False
         self._resume_at: tuple[int, bool] | None = None
+        self._warming = False
+        from PySide6.QtCore import QTimer
+
+        self._warm_timer = QTimer(self)  # never stay muted, even if the position doesn't move
+        self._warm_timer.setSingleShot(True)
+        self._warm_timer.setInterval(1500)
+        self._warm_timer.timeout.connect(self._warmed)
         self.player = None
         layout = QHBoxLayout(self)
         layout.setContentsMargins(8, 4, 8, 4)
@@ -93,13 +102,24 @@ class PlayerBar(QWidget):
         self.path = path
         self.now_label.setText(title)
         self.now_label.setToolTip(path)
-        # Start only once the file has loaded, from 0:00: starting straight away could lose the first
-        # moment of the song while the file was still opening.
-        self._resume_at = (0, True)
+        # Windows' sound output takes a moment to start, and the first fraction of a second of a song
+        # was lost in it. So each song starts muted, and once the sound is running (a quarter of a
+        # second in) it jumps back to 0:00 and unmutes: you hear it from the very start.
+        self._resume_at = None
+        self._warming = True
+        self.audio.setMuted(True)
+        self._warm_timer.start()
         self.player.setSource(QUrl.fromLocalFile(path))
-        if self.player.mediaStatus() in (QMediaPlayer.MediaStatus.LoadedMedia,
-                                         QMediaPlayer.MediaStatus.BufferedMedia):
-            self._apply_resume()
+        self.player.play()
+
+    def _warmed(self) -> None:
+        if not self._warming:
+            return
+        self._warming = False
+        self._warm_timer.stop()
+        if self.player and self.path:
+            self.player.setPosition(0)
+        self.audio.setMuted(False)
 
     def toggle(self) -> None:
         if not self.player:
@@ -125,6 +145,10 @@ class PlayerBar(QWidget):
     def release(self) -> tuple[str, int, bool]:
         """Stop and let go of the file. Returns (path, position, was playing) for resume()."""
         state = (self.path, self.player.position() if self.player else 0, self.is_playing())
+        if self._warming:  # let go mid warm-up: not muted afterwards
+            self._warming = False
+            self._warm_timer.stop()
+            self.audio.setMuted(False)
         if self.player:
             self.player.stop()
             self.player.setSource(QUrl())
@@ -165,6 +189,10 @@ class PlayerBar(QWidget):
         self.audio.setVolume((value / 100) ** 3 if value else 0.0)
 
     def _position(self, ms: int) -> None:
+        if self._warming:
+            if ms >= WARM_UP_MS:
+                self._warmed()
+            return  # the bar stays at 0:00 while the song warms up
         if not self._seeking:
             self.slider.setValue(ms)
             self.pos_label.setText(fmt_time(ms / 1000))

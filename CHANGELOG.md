@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.8.1
+
+- Fixed: since 0.8.0, playing stopped after each song instead of going on to the next one. Songs start the way
+  they did before 0.8.0 again.
+- Another try at the start of songs being cut off: each song starts muted, and a quarter of a second in (once
+  Windows' sound output is running) it jumps back to 0:00 and the sound comes on, so the beginning isn't lost.
+  You may notice a quarter-second wait before a song starts.
+
 ## 0.8.0
 
 - The Keep review shows what each song will become: **Becomes: Music\Artist - Title.mp3**, with its current
