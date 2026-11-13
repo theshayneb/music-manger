@@ -1281,28 +1281,20 @@ class MainWindow(QMainWindow):
             return
         # First a last look at everything each song has (⚠ for what's empty)...
         details = [tags.read(t.path, with_details=True) for t in tracks]
-        planned = {t.path: dest for t, dest, _n in keep.plan(tracks, self.settings) if dest}
-        review = KeepReview(details, self, becomes=planned)
+        # One window: every tag, the art and lyrics (⚠ for what's empty), and what each song will be
+        # called and where it goes, with the file-name pattern and "replace" choices.
+        review = KeepReview(details, self, settings=self.settings,
+                            planner=lambda pattern, overwrite: keep.plan(tracks, self.settings, pattern, overwrite))
         if review.exec() != QDialog.DialogCode.Accepted:
             if review.fix:
                 self._select_path(review.fix)
                 self.editor.setFocus()
             return
-        # ...then the names they'll have, and whether to replace songs already in the Library.
-        rename = self.settings.rename_on_keep
-        dialog = PlanDialog(
-            "Keep", f"These songs will go into your Library ({self.settings.library_folder}):",
-            tracks, self.settings,
-            lambda pattern, opts: keep.plan(tracks, self.settings, pattern, opts.get("overwrite", False)), "Keep",
-            pattern=rename, parent=self,
-            options=[("overwrite", "Replace songs with the same name in the Library (the old ones go to the "
-                                   "Recycle Bin). Otherwise the new song gets “_1” added.", False)])
-        if dialog.exec() != QDialog.DialogCode.Accepted:
-            return
-        if rename:
-            self.settings.rename_pattern = dialog.current_pattern()
-        overwrite = dialog.chosen().get("overwrite", False)
-        rows = [(t, dest) for t, dest, _note in dialog.rows if dest]
+        if self.settings.rename_on_keep and review.current_pattern():
+            self.settings.rename_pattern = review.current_pattern()
+            self.settings.remember_pattern(review.current_pattern())
+        overwrite = review.overwrite
+        rows = [(t, dest) for t, dest, _note in review.rows if dest]
         # Only when the song being kept is the one playing does the next one start; any other song
         # that's playing is left alone.
         kept_paths = [t.path for t, _ in rows]

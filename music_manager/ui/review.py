@@ -25,11 +25,14 @@ from ..core.tags import Details, Track
 from .model import stars
 
 WARN = "⚠"
-FIELDS = [("title", "Title"), ("artist", "Artist"), ("album_artist", "Album Artist"), ("album", "Album"),
-          ("edition", "Edition"), ("year", "Year"), ("genre", "Genre"), ("language", "Language"),
-          ("tempo", "Tempo"), ("track", "Track #"), ("disc", "Disc #"), ("original_artist", "Original Artist"),
-          ("original_album", "Original Album"), ("original_year", "Original Year"),
-          ("obsidian_tags", "Obsidian tags"), ("rating", "Rating")]
+# As the Tags panel's tabs: the standard tags, then the extra ones.
+STANDARD = [("title", "Title"), ("artist", "Artist"), ("album_artist", "Album Artist"), ("album", "Album"),
+            ("year", "Year"), ("genre", "Genre"), ("language", "Language"), ("tempo", "Tempo"),
+            ("track", "Track #"), ("disc", "Disc #"), ("rating", "Rating")]
+EXTRA = [("album_type", "Album Type"), ("edition", "Edition"), ("original_artist", "Original Artist"),
+         ("original_album", "Original Album"), ("original_year", "Original Year"),
+         ("obsidian_tags", "Obsidian tags")]
+FIELDS = STANDARD + EXTRA
 ART = 220
 
 
@@ -58,11 +61,17 @@ class KeepReview(QDialog):
     """exec() accepted = carry on with Keep. Rejected with .fix set = the song to fix first."""
 
     def __init__(self, details: list[Details], parent: QWidget | None = None,
-                 becomes: dict[str, str] | None = None):
-        """becomes: {song's path: what Keep will make of it} (folder and new name)."""
+                 becomes: dict[str, str] | None = None, planner=None, settings=None):  # type: ignore[no-untyped-def]
+        """becomes: {song's path: what Keep will make of it} (folder and new name).
+        planner(pattern, overwrite) -> [(track, new path or None, note)]: with it, the window also has the
+        file-name pattern and "replace" choices, and .rows / .overwrite say what to do."""
         super().__init__(parent)
         self.details = details
         self.becomes = becomes or {}
+        self.notes: dict[str, str] = {}
+        self.planner, self.settings = planner, settings
+        self.rows: list = []
+        self.overwrite = False
         self.fix: str | None = None
         self.setWindowTitle(f"Check before keeping — {len(details)} song{'s' if len(details) != 1 else ''}")
         self.resize(980, 720)
@@ -89,6 +98,27 @@ class KeepReview(QDialog):
         layout.addWidget(split, 1)
         if len(details) == 1:
             self.songs.hide()
+        self.pattern = None
+        self.replace = None
+        if planner is not None:
+            from PySide6.QtWidgets import QCheckBox, QComboBox
+
+            choices = QHBoxLayout()
+            if settings is not None and settings.rename_on_keep:
+                choices.addWidget(QLabel("File names"))
+                self.pattern = QComboBox()
+                self.pattern.setEditable(True)
+                self.pattern.addItems(settings.rename_presets)
+                self.pattern.setCurrentText(settings.rename_pattern)
+                self.pattern.setToolTip("{artist} {title} {album} {albumartist} {year} {genre} {track} {disc} "
+                                        "{name}; {track:02} adds a leading zero")
+                self.pattern.currentTextChanged.connect(lambda _t: self._replan())
+                choices.addWidget(self.pattern, 1)
+            self.replace = QCheckBox("Replace songs with the same name in the Library (old ones to the Recycle Bin)")
+            self.replace.setToolTip("Otherwise the new song gets “_1” added to its name")
+            self.replace.toggled.connect(lambda _on: self._replan())
+            choices.addWidget(self.replace)
+            layout.addLayout(choices)
         buttons = QDialogButtonBox()
         self.ok = buttons.addButton("Looks right: Keep", QDialogButtonBox.ButtonRole.AcceptRole)
         fix = buttons.addButton("Fix this song first", QDialogButtonBox.ButtonRole.RejectRole)
@@ -98,6 +128,26 @@ class KeepReview(QDialog):
         cancel.clicked.connect(self.reject)
         layout.addWidget(buttons)
         self.songs.setCurrentRow(0)
+        if planner is not None:
+            self._replan()
+
+    def current_pattern(self) -> str:
+        return self.pattern.currentText().strip() if self.pattern is not None else ""
+
+    def _replan(self) -> None:
+        """Work out (again) where each song goes and what it's called, and show it."""
+        from ..core import naming
+
+        pattern = self.current_pattern()
+        if pattern and naming.unknown_placeholders(pattern):
+            self.ok.setEnabled(False)
+            return
+        self.overwrite = bool(self.replace and self.replace.isChecked())
+        self.rows = self.planner(pattern or None, self.overwrite)
+        self.becomes = {t.path: dest for t, dest, _n in self.rows if dest}
+        self.notes = {t.path: note for t, _d, note in self.rows}
+        self.ok.setEnabled(bool(self.becomes))
+        self._show(self.songs.currentRow())
 
     def _fix(self) -> None:
         row = max(0, self.songs.currentRow())
@@ -125,7 +175,18 @@ class KeepReview(QDialog):
                                                           Qt.TransformationMode.SmoothTransformation))
         top.addWidget(art, 0, Qt.AlignmentFlag.AlignTop)
         form = QFormLayout()
+
+        def section(text: str) -> None:
+            head = QLabel(text)
+            head.setStyleSheet("color: palette(placeholder-text); font-size: 11px; font-weight: 600;"
+                               " padding-top: 6px; border-bottom: 1px solid palette(mid);")
+            form.addRow(head)
+
         for key, label in FIELDS:
+            if key == "title":
+                section("STANDARD TAGS")
+            elif key == "album_type":
+                section("EXTRA TAGS")
             value = value_of(t, key)
             text = QLabel(value if value else f"<span style='color:#e0a040'>{WARN} empty</span>")
             text.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
@@ -141,12 +202,15 @@ class KeepReview(QDialog):
             import os
 
             where = os.path.join(os.path.basename(os.path.dirname(becomes)), os.path.basename(becomes))
+            note = self.notes.get(t.path, "")
             file_text = QLabel(f"<b>Becomes: {html.escape(where)}</b><br>"
-                               f"<span style='color:#9aa0a8'>Now: {html.escape(t.name)}<br>{html.escape(info)}</span>")
+                               f"<span style='color:#9aa0a8'>Now: {html.escape(t.name)}<br>{html.escape(info)}"
+                               + (f"<br>{html.escape(note)}" if note else "") + "</span>")
             file_text.setToolTip(becomes)
         else:
             file_text = QLabel(f"{t.name}\n{info}")
         file_text.setWordWrap(True)
+        section("FILE")
         form.addRow("File", file_text)
         top.addLayout(form, 1)
         outer.addLayout(top)

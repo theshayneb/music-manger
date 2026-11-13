@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.8.2
+
+- **Keep is one window**: the check of every tag, the art and the lyrics now also has the file-name pattern and
+  the "Replace songs with the same name" choice at the bottom, and shows what each song becomes (updated as you
+  change them). The separate name/move window is gone.
+- That window lists the tags like the Tags panel's tabs: **Standard tags**, then **Extra tags** (now including
+  **Album Type**), then the file.
+
 ## 0.8.1
 
 - Fixed: since 0.8.0, playing stopped after each song instead of going on to the next one. Songs start the way

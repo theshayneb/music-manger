@@ -378,3 +378,28 @@ def test_genre_from_the_artists_other_songs_and_suggestions(app, song):
     d = tags.read(str(path), with_details=True)
     editor.show_tracks([d.track], d, keep_pending=False)
     assert editor.edits["genre"].text() == "Punk" and not editor.changed
+
+
+@needs_ffmpeg
+def test_keep_window_has_names_and_replace_and_extra_tags(app, song, tmp_path):
+    from PySide6.QtWidgets import QLabel
+
+    from music_manager.core import keep
+    from music_manager.ui.review import KeepReview
+
+    new = song("dl/x.mp3")
+    (tmp_path / "Music").mkdir()
+    song("Music/Adele - Hello.mp3", seconds=1)
+    tags.write(str(new), {"title": "Hello", "artist": "Adele", "album_type": "album;live"})
+    settings = Settings(library_folder=str(tmp_path / "Music"))
+    track = tags.read_track(str(new))
+    review = KeepReview([tags.read(str(new), with_details=True)], settings=settings,
+                        planner=lambda pattern, overwrite: keep.plan([track], settings, pattern, overwrite))
+    texts = [w.text() for w in review.page.widget().findChildren(QLabel)]
+    assert "album;live" in texts and any("Becomes:" in t and "Hello_1.mp3" in t for t in texts)
+    review.replace.setChecked(True)
+    texts = [w.text() for w in review.page.widget().findChildren(QLabel)]
+    assert any("Becomes:" in t and "Adele - Hello.mp3" in t and "replaces" in t for t in texts)
+    assert review.overwrite and review.rows[0][1].endswith("Adele - Hello.mp3")
+    review.pattern.setCurrentText("{title}")
+    assert review.rows[0][1].endswith("Hello.mp3") and "Adele" not in review.rows[0][1].rsplit("/", 1)[-1]
